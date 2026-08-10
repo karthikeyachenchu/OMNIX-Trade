@@ -1,0 +1,4 @@
+# Optional: FinBERT sentiment (better accuracy on financial text).
+# ~2.5 GB download (PyTorch CUDA). VADER fallback works without this.
+torch --index-url https://download.pytorch.org/whl/cu121
+transformers>=4.40

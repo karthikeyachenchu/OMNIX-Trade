@@ -1,0 +1,23 @@
+# secrets & session tokens — never commit
+.env
+.fyers_token
+*.log
+
+# local financial data / runtime state
+journal.db
+journal.db-journal
+.auto_blocked.json
+.auto_invest.json
+.capital.json
+.risk_state.json
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+research/output/

@@ -1,0 +1,116 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  Trade Sentinel — user configuration
+#  Edit this file; everything else is code you shouldn't need to touch.
+# ══════════════════════════════════════════════════════════════════════════
+
+mode: paper              # paper | live   (live also needs LIVE_TRADING_CONFIRMED=YES in .env)
+data_source: auto        # auto | fyers | yfinance   (auto = fyers if logged in, else yfinance)
+capital: 100000          # trading capital in INR — risk math is based on this
+
+# Symbols to watch. `fyers` is the Fyers symbol, `yf` the yfinance fallback.
+# lot_size values pulled from the Fyers symbol master 2026-07-13 — re-verify after
+# exchange lot revisions (https://public.fyers.in/sym_details/NSE_FO.csv / BSE_FO.csv).
+watchlist:
+  # ── indices ──
+  - name: NIFTY 50
+    fyers: NSE:NIFTY50-INDEX
+    yf: ^NSEI
+    options: true        # generate option trade suggestions for this underlying
+    lot_size: 65
+  - name: BANKNIFTY
+    fyers: NSE:NIFTYBANK-INDEX
+    yf: ^NSEBANK
+    options: true
+    lot_size: 30
+  - name: SENSEX
+    fyers: BSE:SENSEX-INDEX
+    yf: ^BSESN
+    options: true
+    lot_size: 20
+  - name: FINNIFTY
+    fyers: NSE:FINNIFTY-INDEX
+    yf: NIFTY_FIN_SERVICE.NS
+    options: true
+    lot_size: 60
+  - name: MIDCPNIFTY
+    fyers: NSE:MIDCPNIFTY-INDEX
+    yf: NIFTY_MID_SELECT.NS
+    options: true
+    lot_size: 120
+  # ── capital-market / exchange stocks (all F&O) ──
+  - name: BSE
+    fyers: NSE:BSE-EQ
+    yf: BSE.NS
+    options: true
+    lot_size: 200
+  - name: MCX
+    fyers: NSE:MCX-EQ
+    yf: MCX.NS
+    options: true
+    lot_size: 225
+  - name: CDSL
+    fyers: NSE:CDSL-EQ
+    yf: CDSL.NS
+    options: true
+    lot_size: 475
+  - name: ANGELONE
+    fyers: NSE:ANGELONE-EQ
+    yf: ANGELONE.NS
+    options: true
+    lot_size: 2500
+  # ── large caps ──
+  - name: RELIANCE
+    fyers: NSE:RELIANCE-EQ
+    yf: RELIANCE.NS
+    options: true
+    lot_size: 500
+  - name: HDFCBANK
+    fyers: NSE:HDFCBANK-EQ
+    yf: HDFCBANK.NS
+    options: true
+    lot_size: 650
+
+# Auto-invest wallet default: [] = auto mode (deploy on whichever signal
+# qualifies); non-empty = preference mode (wait for these names only).
+# Runtime changes from the dashboard override this (saved to .auto_invest.json).
+# Indices are traded via their real ATM options (all 4 legs, live premium).
+auto_invest:
+  focus: ["NIFTY 50", "SENSEX"]   # auto-bot trades only these two (they trend best)
+
+llm:
+  model: trade-sentinel        # custom persona model (created via Modelfile)
+  fallback_model: llama3.1:8b  # used if the custom model doesn't exist
+  max_tool_rounds: 4           # how many tool-call rounds the LLM may take
+  advise_on_signal: true       # ask LLM for a written plan when a strong signal fires
+
+# ── HARD guardrails. Enforced in Python at the order layer.
+# ── The LLM physically cannot override these.
+risk:
+  max_daily_drawdown_pct: 2.0    # kill-switch: no new trades once daily loss hits this
+  max_risk_per_trade_pct: 1.0    # max capital risked between entry and stop-loss
+  max_open_positions: 3
+  max_trades_per_day: 6
+  consecutive_losses_pause: 2    # pause after N losses in a row...
+  cooldown_minutes: 45           # ...for this long
+  no_entry_after: "14:30"        # IST — no fresh entries after this
+  square_off_time: "15:12"       # IST — flatten all paper/live intraday positions
+  min_reward_risk: 1.5           # reject trade plans with worse R:R
+
+engine:
+  scan_interval_sec: 30          # how often to rescan the watchlist
+  candle_interval: 5m            # working timeframe
+  lookback_days: 5
+  signal_threshold: 0.55         # composite score (0–1) needed to fire an alert
+  sentiment_refresh_min: 10
+
+alerts:
+  desktop: true                  # Windows toast notifications
+  sound: true                    # beep on signals (distinct tone per severity)
+  # Phone push via ntfy: install the "ntfy" app (Play Store / App Store) and
+  # subscribe to this exact topic. Treat the topic like a password.
+  ntfy_topic: omnix-trade-karth-x9k42v
+
+dashboard:
+  host: 0.0.0.0                  # 0.0.0.0 = phone on the same Wi-Fi can open the dashboard
+  port: 8080
+  auto_open_browser: true

@@ -1,0 +1,26 @@
+# Core
+ollama>=0.4.0
+pandas>=2.0
+numpy>=1.26
+pyyaml>=6.0
+python-dotenv>=1.0
+rich>=13.0
+
+# Market data
+fyers-apiv3>=3.1.0
+yfinance>=0.2.40
+
+# News & sentiment (light default — VADER)
+feedparser>=6.0
+vaderSentiment>=3.3
+
+# Dashboard
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# Alerts
+plyer>=2.1
+
+# Optional heavy sentiment (FinBERT) — install only if you want it:
+#   pip install -r requirements-finbert.txt
+segno>=1.6          # QR code for phone connect
