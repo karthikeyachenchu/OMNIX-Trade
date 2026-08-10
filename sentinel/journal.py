@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import datetime
 from pathlib import Path
 
+from . import clock
 from .config import ROOT
 
 DB = ROOT / "journal.db"
@@ -45,7 +45,7 @@ class Journal:
         with self._lock, self._conn() as c:
             c.execute(
                 "INSERT INTO events (ts, kind, symbol, direction, score, detail) VALUES (?,?,?,?,?,?)",
-                (datetime.now().isoformat(timespec="seconds"), kind, symbol,
+                (clock.now_iso(), kind, symbol,
                  direction, score, json.dumps(detail, default=str)),
             )
 

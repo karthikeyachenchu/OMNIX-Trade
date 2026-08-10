@@ -13,9 +13,9 @@ import re
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
+from . import clock
 from .config import ROOT
 
 DB = ROOT / "journal.db"
@@ -100,7 +100,7 @@ class TradeTracker:
     def add(self, symbol: str, name: str, side: str, qty: int,
             entry: float, stop_loss: float, target: float | None = None,
             source: str = "manual") -> TrackedTrade:
-        opened = datetime.now().isoformat(timespec="seconds")
+        opened = clock.now_iso()
         with self._lock, self._conn() as c:
             cur = c.execute(
                 "INSERT INTO tracked_trades (opened_at, symbol, name, side, qty, entry, stop_loss, target, source) "
@@ -172,7 +172,7 @@ class TradeTracker:
             for i, t in enumerate(self._trades):
                 if t.id == trade_id:
                     t.status, t.exit_price = "CLOSED", float(exit_price)
-                    t.closed_at = datetime.now().isoformat(timespec="seconds")
+                    t.closed_at = clock.now_iso()
                     t.pnl = round(t.unrealized(t.exit_price), 2)
                     with self._conn() as c:
                         c.execute("UPDATE tracked_trades SET status='CLOSED', closed_at=?, "
@@ -235,6 +235,6 @@ class TradeTracker:
 
             if key and self._guidance.get(t.id, {}).get("key") != key:
                 self._guidance[t.id] = {"key": key, "msg": msg, "level": level,
-                                        "at": datetime.now().strftime("%H:%M:%S")}
+                                        "at": clock.now().strftime("%H:%M:%S")}
                 events.append((t, msg, level))
         return events

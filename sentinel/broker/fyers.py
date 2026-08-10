@@ -14,14 +14,15 @@ Anything less falls back to paper simulation.
 from __future__ import annotations
 
 import json
-import time as _time
-from datetime import datetime, timedelta
-from pathlib import Path
+import logging
+from datetime import timedelta
 
+from .. import clock
 from ..config import ROOT, Settings
-from ..guardrails import OrderRequest, RiskGuardian
-from .base import Broker, Fill, Position
+from ..guardrails import RiskGuardian
+from .base import Broker, Fill, Position, require_token
 
+log = logging.getLogger("sentinel.fyers")
 TOKEN_FILE = ROOT / ".fyers_token"
 
 
@@ -59,7 +60,7 @@ class FyersSession:
             return False
         TOKEN_FILE.write_text(json.dumps({
             "access_token": resp["access_token"],
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "date": clock.trading_day(),
         }), encoding="utf-8")
         print("Login OK — token cached for today.")
         return True
@@ -71,7 +72,7 @@ class FyersSession:
             data = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return None
-        if data.get("date") != datetime.now().strftime("%Y-%m-%d"):
+        if data.get("date") != clock.trading_day():
             return None  # stale — Fyers tokens are valid for one trading day
         return data.get("access_token")
 
@@ -110,7 +111,7 @@ class FyersData:
     def history(self, symbol: str, interval: str, days: int):
         import pandas as pd
         res = self._INTERVAL_MAP.get(interval, "5")
-        to = datetime.now()
+        to = clock.now()
         frm = to - timedelta(days=days)
         resp = self.session.client().history({
             "symbol": symbol, "resolution": res, "date_format": "1",
@@ -198,9 +199,14 @@ class FyersData:
 
 
 class FyersBroker(Broker):
-    """Live order routing. Only reachable when both safety flags are set."""
+    """Live order routing. Only reachable when both safety flags are set.
 
-    def __init__(self, session: FyersSession, guardian: RiskGuardian, settings: Settings):
+    Writes are token-guarded: only the ExecutionEngine can reach them, and it
+    only calls them for a risk-approved OrderIntent (master prompt §79).
+    """
+
+    def __init__(self, session: FyersSession, guardian: RiskGuardian,
+                 settings: Settings, costs=None):
         if not (settings.mode == "live" and settings.live_trading_confirmed):
             raise RuntimeError(
                 "Live trading is not armed. Requires mode: live in config.yaml "
@@ -208,50 +214,76 @@ class FyersBroker(Broker):
             )
         self.session = session
         self.guardian = guardian
+        self.s = settings
+        self.costs = costs
+        self._data = FyersData(session)
         self._fills: list[Fill] = []
 
-    def place_order(self, order: OrderRequest) -> tuple[bool, str]:
-        ok, reason = self.guardian.check_entry(order)
-        if not ok:
-            return False, reason
-        # Bracket-style: market entry + hard SL and target attached at the exchange.
+    def execute(self, intent, *, _token) -> tuple[bool, str, Fill | None]:
+        require_token(_token)
+        # NOTE: productType is configurable because BO (bracket order) was
+        # restricted by Indian exchanges and Fyers v3 may reject it (defect
+        # D11). INTRADAY + a separate protective stop is the safe default;
+        # verify against current Fyers docs before changing.
         payload = {
-            "symbol": order.symbol,
-            "qty": order.qty,
+            "symbol": intent.symbol,
+            "qty": intent.qty,
             "type": 2,  # market
-            "side": 1 if order.side == "BUY" else -1,
-            "productType": "BO",
+            "side": 1 if intent.side.value == "BUY" else -1,
+            "productType": self.s.live_product_type,
             "limitPrice": 0, "stopPrice": 0, "disclosedQty": 0,
             "validity": "DAY", "offlineOrder": False,
-            "stopLoss": round(abs(order.entry - order.stop_loss), 1),
-            "takeProfit": round(abs((order.target or order.entry) - order.entry), 1),
-            "orderTag": (order.tag or "sentinel")[:20],
+            "orderTag": (intent.strategy_id or "sentinel")[:20],
         }
+        if self.s.live_product_type == "BO":
+            payload["stopLoss"] = round(abs(intent.entry - intent.stop_loss), 1)
+            payload["takeProfit"] = round(
+                abs((intent.target or intent.entry) - intent.entry), 1)
+
         resp = self.session.client().place_order(payload)
         if resp.get("s") == "ok":
-            self.guardian.on_entry()
-            self._fills.append(Fill(order.symbol, order.side, order.qty, order.entry,
-                                    datetime.now(), reason=f"LIVE ENTRY {order.tag}"))
-            return True, f"LIVE ORDER PLACED: {resp.get('id', '')}"
-        return False, f"Fyers rejected order: {resp}"
+            fill = Fill(intent.symbol, intent.side.value, intent.qty, intent.entry,
+                        clock.now(), reason=f"LIVE ENTRY {intent.strategy_id}",
+                        broker_order_id=str(resp.get("id", "")),
+                        intent_id=intent.intent_id)
+            self._fills.append(fill)
+            return True, f"LIVE ORDER PLACED: {resp.get('id', '')}", fill
+        return False, f"Fyers rejected order: {resp}", None
 
     def positions(self) -> list[Position]:
-        resp = self.session.client().positions()
+        """D10 fix: this used to read `qty` and `avgPrice`, but Fyers v3 returns
+        `netQty` and `netAvg`, so live positions always came back EMPTY. There
+        is now exactly one normalisation layer — FyersData.positions() — and
+        every consumer goes through it (master prompt §13)."""
         out = []
-        for p in resp.get("netPositions", []):
-            if p.get("qty", 0) == 0:
-                continue
+        for p in self._data.positions():
             out.append(Position(
-                symbol=p["symbol"], side="BUY" if p["qty"] > 0 else "SELL",
-                qty=abs(p["qty"]), entry=p.get("avgPrice", 0.0),
-                stop_loss=0.0, target=None, opened_at=datetime.now(),
-                ltp=p.get("ltp", 0.0),
+                symbol=p["symbol"], side=p["side"], qty=p["qty"],
+                entry=p["entry"], stop_loss=0.0, target=None,
+                opened_at=clock.now(), ltp=p["ltp"],
             ))
         return out
 
-    def mark_to_market(self, quotes: dict[str, float]) -> list[Fill]:
-        return []  # exchange-side BO legs handle SL/target in live mode
+    def mark_to_market(self, quotes: dict[str, float], *, _token) -> list[Fill]:
+        """D2: the live kill switch used to be blind because this returned []
+        unconditionally, so `on_exit()` was never called and daily P&L stayed
+        0.00 forever. Realised P&L is now read back from the broker and fed to
+        the risk engine by the reconciler (see reconcile.py), not invented here.
+        """
+        require_token(_token)
+        return []
 
-    def close_all(self, reason: str) -> list[Fill]:
+    def close(self, symbol: str, reason: str, price: float | None = None,
+              *, _token) -> Fill | None:
+        require_token(_token)
+        resp = self.session.client().exit_positions({"id": symbol})
+        if resp.get("s") != "ok":
+            log.warning("live exit failed for %s: %s", symbol, resp)
+            return None
+        return Fill(symbol, "SELL", 0, price or 0.0, clock.now(),
+                    reason=reason, broker_order_id=str(resp.get("id", "")))
+
+    def close_all_positions(self, reason: str, *, _token) -> list[Fill]:
+        require_token(_token)
         self.session.client().exit_positions({})
-        return []  # live P&L settles in the Fyers account, not the local wallet
+        return []  # realised P&L is reconciled from the broker, not assumed here

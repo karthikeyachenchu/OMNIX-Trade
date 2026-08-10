@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import socket
+import time
+from collections import defaultdict
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -57,27 +60,60 @@ class StopRequest(BaseModel):
     stop_loss: float
 
 
+class KillRequest(BaseModel):
+    reason: str = ""
+
+
+class KillResetRequest(BaseModel):
+    confirmation: str
+
+
 def create_app(engine) -> FastAPI:
     app = FastAPI(title="OMNIX-Trade")
     pin = engine.s.dash_pin
+    # Defect D3: this dashboard exposes money-moving POST endpoints. It used to
+    # bind 0.0.0.0 with the PIN check disabled (DASHBOARD_PIN was never set),
+    # so anyone on the Wi-Fi could start/stop the wallet. Config validation now
+    # refuses a non-loopback bind without a PIN; this gate does the rest.
+    failures: dict[str, list[float]] = defaultdict(list)
+
+    def _rate_limited(host: str) -> bool:
+        """Crude but effective: 10 bad PINs per 5 minutes per host."""
+        now = time.time()
+        recent = [t for t in failures[host] if now - t < 300]
+        failures[host] = recent
+        return len(recent) >= 10
 
     @app.middleware("http")
     async def pin_gate(request: Request, call_next):
-        """Optional PIN for phone/LAN clients. Localhost is always allowed."""
-        if pin and (request.client.host if request.client else "") not in _LOCAL:
-            supplied = (request.query_params.get("pin")
-                        or request.cookies.get("omnix_pin", ""))
-            if supplied != pin:
-                return HTMLResponse(
-                    "<body style='background:#08080a;color:#eee;font-family:sans-serif;"
-                    "display:grid;place-items:center;height:100vh'><form>"
-                    "<h2>OMNIX-Trade</h2><input name='pin' type='password' placeholder='PIN'"
-                    " style='padding:10px;border-radius:8px;border:0'>"
-                    "<button style='padding:10px'>Enter</button></form></body>", status_code=401)
-            response = await call_next(request)
-            response.set_cookie("omnix_pin", supplied, max_age=86400 * 30)
-            return response
-        return await call_next(request)
+        """PIN for non-loopback clients. Localhost is always allowed."""
+        host = request.client.host if request.client else ""
+        if not pin or host in _LOCAL:
+            return await call_next(request)
+
+        if _rate_limited(host):
+            log.warning("rate-limited PIN attempts from %s", host)
+            return JSONResponse({"error": "too many attempts, try again later"},
+                                status_code=429)
+
+        supplied = (request.query_params.get("pin")
+                    or request.cookies.get("omnix_pin", ""))
+        # Constant-time comparison — a naive == leaks the PIN one byte at a
+        # time to anyone who can measure response latency.
+        if not (supplied and secrets.compare_digest(supplied, pin)):
+            failures[host].append(time.time())
+            return HTMLResponse(
+                "<body style='background:#08080a;color:#eee;font-family:sans-serif;"
+                "display:grid;place-items:center;height:100vh'><form>"
+                "<h2>OMNIX-Trade</h2><input name='pin' type='password' placeholder='PIN'"
+                " style='padding:10px;border-radius:8px;border:0'>"
+                "<button style='padding:10px'>Enter</button></form></body>",
+                status_code=401)
+
+        response = await call_next(request)
+        response.set_cookie("omnix_pin", supplied, max_age=86400 * 30,
+                            httponly=True, samesite="strict")
+        return response
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
@@ -252,6 +288,27 @@ def create_app(engine) -> FastAPI:
         } for ts, r in df.iterrows()]
         live = engine.ticks.ltp(symbol) if engine.ticks else None
         return {"symbol": symbol, "interval": interval, "candles": candles, "live": live}
+
+    # ── risk / kill switch (§5) ───────────────────────────────────────────
+    @app.get("/api/risk")
+    async def risk_state():
+        return engine.guardian.snapshot()
+
+    @app.post("/api/risk/kill")
+    async def kill(req: KillRequest):
+        """Manual kill switch. Anyone can trip it; only 'RESET' clears it."""
+        engine.guardian.trip_kill_switch(req.reason or "manually tripped from dashboard")
+        return engine.guardian.snapshot()
+
+    @app.post("/api/risk/reset")
+    async def kill_reset(req: KillResetRequest):
+        ok, msg = engine.guardian.reset_kill_switch(req.confirmation)
+        return {"ok": ok, "message": msg, "risk": engine.guardian.snapshot()}
+
+    @app.get("/api/orders")
+    async def orders(limit: int = 50):
+        """Full order history — every intent, its risk decision, and its fate."""
+        return {"orders": engine.order_store.recent(limit)}
 
     # ── phone connect info ────────────────────────────────────────────────
     @app.get("/api/phone")

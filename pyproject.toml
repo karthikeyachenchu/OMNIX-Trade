@@ -1,0 +1,37 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "slow: tests that take more than a second",
+    "network: tests that need the internet (excluded by default)",
+]
+
+[tool.coverage.run]
+source = ["sentinel", "dashboard"]
+omit = ["*/__pycache__/*", "*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM"]
+ignore = [
+    "E501",    # long lines are checked by line-length, not doubly
+    "B008",    # FastAPI dependency style
+    "SIM105",  # contextlib.suppress is not always clearer
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]     # sys.path setup before imports is deliberate
+"sentinel/guardrails.py" = ["E402"]

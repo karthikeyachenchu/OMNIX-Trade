@@ -77,7 +77,7 @@ class Notifier:
             prio, tags = _NTFY.get(level, _NTFY["info"])
             requests.post(f"https://ntfy.sh/{self.ntfy_topic}",
                           data=message.encode("utf-8"),
-                          headers={"Title": f"OMNIX-Trade: {title}".encode("utf-8"),
+                          headers={"Title": f"OMNIX-Trade: {title}".encode(),
                                    "Priority": prio, "Tags": tags},
                           timeout=6)
         except Exception as e:

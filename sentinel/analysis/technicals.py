@@ -76,9 +76,25 @@ def snapshot(df: pd.DataFrame) -> dict:
     vwap = session_vwap(df)
     _atr = atr(df)
     last = -1
+
+    # D5 fix: `change_pct` used to be `close[-1]/close[0] - 1`, i.e. the change
+    # across the ENTIRE 5-day lookback, while being surfaced to the user and the
+    # LLM as today's move. Session change and lookback change are now separate
+    # fields with names that say what they are (master prompt §18).
+    today_mask = df.index.date == df.index[-1].date()
+    session = close[today_mask]
+    day_open = float(session.iloc[0]) if len(session) else float(close.iloc[0])
+    ltp = float(close.iloc[last])
+    lookback_open = float(close.iloc[0])
+
     return {
-        "ltp": round(float(close.iloc[last]), 2),
-        "change_pct": round(float(close.iloc[last] / close.iloc[0] - 1) * 100, 2),
+        "ltp": round(ltp, 2),
+        "day_open": round(day_open, 2),
+        "session_change_pct": round((ltp / day_open - 1) * 100, 2) if day_open else 0.0,
+        "lookback_change_pct": round((ltp / lookback_open - 1) * 100, 2) if lookback_open else 0.0,
+        # kept as an alias of the session figure so existing readers are correct
+        # rather than merely unbroken
+        "change_pct": round((ltp / day_open - 1) * 100, 2) if day_open else 0.0,
         "ema9": round(float(ema(close, 9).iloc[last]), 2),
         "ema21": round(float(ema(close, 21).iloc[last]), 2),
         "ema50": round(float(ema(close, 50).iloc[last]), 2),

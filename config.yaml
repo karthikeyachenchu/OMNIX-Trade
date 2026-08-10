@@ -110,7 +110,23 @@ alerts:
   # subscribe to this exact topic. Treat the topic like a password.
   ntfy_topic: omnix-trade-karth-x9k42v
 
+# ── Execution realism. Paper trading must never flatter itself (§7).
+execution:
+  paper_spread_pct: 0.002        # full bid-ask as a fraction of price (half paid per leg)
+  slippage_pct: 0.001            # adverse fill assumption on market orders
+
+# ── Transaction costs. VERIFY THESE AGAINST YOUR OWN CONTRACT NOTE.
+# Defaults live in sentinel/execution/costs.py; anything set here overrides them.
+# Same model is used by paper fills, the allocator and the backtester.
+costs: {}
+#  options:
+#    brokerage_flat: 20.0
+#    stt_sell: 0.001
+
 dashboard:
-  host: 0.0.0.0                  # 0.0.0.0 = phone on the same Wi-Fi can open the dashboard
+  # 127.0.0.1 keeps the money-moving endpoints off the network. To reach the
+  # dashboard from your phone, set 0.0.0.0 AND put DASHBOARD_PIN in .env —
+  # startup refuses a non-loopback bind without one.
+  host: 127.0.0.1
   port: 8080
   auto_open_browser: true

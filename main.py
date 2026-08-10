@@ -95,6 +95,7 @@ def main():
         return
 
     import uvicorn
+
     from dashboard.server import create_app
 
     app = create_app(engine)

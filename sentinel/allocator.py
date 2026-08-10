@@ -8,8 +8,7 @@ behind every pick. Pure computation — it never places orders.
 
 from __future__ import annotations
 
-from datetime import datetime
-
+from . import clock
 from .analysis.strategies import Composite
 from .config import Settings
 
@@ -178,7 +177,7 @@ class CapitalAllocator:
                          "keep the cash and let the engine alert you when conviction returns.")
 
         return {
-            "as_of": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "as_of": clock.now().strftime("%Y-%m-%d %H:%M:%S %Z"),
             "amount": amount,
             "risk_per_trade_cap": round(risk_per_trade, 2),
             "sentiment": ({"label": sentiment.label, "bias": round(sentiment.bias, 2)}

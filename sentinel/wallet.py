@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import datetime
 from pathlib import Path
 
+from . import clock
 from .config import ROOT
 
 DB = ROOT / "journal.db"
@@ -75,7 +75,7 @@ class Wallet:
             if self.active:
                 return {"error": f"Wallet already active with ₹{self._deposited:,.0f}. "
                                  "Stop it first to change the amount."}
-            now = datetime.now().isoformat(timespec="seconds")
+            now = clock.now_iso()
             with self._conn() as c:
                 cur = c.execute("INSERT INTO wallet (created_at, deposited, cash) VALUES (?,?,?)",
                                 (now, amount, amount))
@@ -106,10 +106,17 @@ class Wallet:
             final = self.state()
             cash_out = self._cash
             self._cash = 0.0
+            # D7 fix: the zeroed cash was never written back, so a STOPPED
+            # wallet row kept its stale balance (wallet id=6 is on disk right
+            # now, STOPPED with cash 560.60). Harmless only because stopped
+            # wallets are never reloaded — it corrupts any report that reads
+            # wallet history. Persist BEFORE the ledger row so `balance_after`
+            # and the wallet row agree.
+            self._persist()
             self._ledger("withdraw", "", -cash_out, "auto-invest stopped, cash withdrawn")
             with self._conn() as c:
                 c.execute("UPDATE wallet SET status='STOPPED', closed_at=? WHERE id=?",
-                          (datetime.now().isoformat(timespec="seconds"), self._id))
+                          (clock.now_iso(), self._id))
             self._id = None
             self._deposited = self._cash = self._realized = 0.0
         return final
@@ -143,7 +150,7 @@ class Wallet:
         with self._conn() as c:
             c.execute("INSERT INTO wallet_ledger (wallet_id, ts, kind, symbol, amount, "
                       "balance_after, note) VALUES (?,?,?,?,?,?,?)",
-                      (self._id or 0, datetime.now().isoformat(timespec="seconds"),
+                      (self._id or 0, clock.now_iso(),
                        kind, symbol, round(amount, 2), round(self._cash, 2), note))
 
     # ── views ─────────────────────────────────────────────────────────────

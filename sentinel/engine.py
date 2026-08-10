@@ -17,8 +17,8 @@ import logging
 import threading
 import time
 import traceback
-from datetime import datetime
 
+from . import clock
 from .alerts.notifier import Notifier
 from .allocator import CapitalAllocator
 from .analysis import strategies
@@ -28,7 +28,12 @@ from .broker.paper import PaperBroker
 from .config import ROOT, Settings
 from .data.feed import build_feed
 from .data.news import NewsFetcher
-from .guardrails import OrderRequest, RiskGuardian
+from .execution.costs import CostModel, Segment, segment_for_symbol
+from .execution.engine import ExecutionEngine
+from .execution.intent import OrderIntent, Side
+from .execution.sizing import PositionSizer
+from .execution.state import OrderStore
+from .guardrails import RiskGuardian
 from .journal import Journal
 from .tracker import TradeTracker
 from .wallet import Wallet
@@ -80,7 +85,17 @@ class TradingEngine:
         self.tracker = TradeTracker()
         self.wallet = Wallet()
 
+        # ── the ONE execution path (master prompt §9/§79) ──────────────────
+        # Nothing outside self.execution may reach a broker's write API; the
+        # brokers refuse untokened writes (broker/base.require_token).
+        self.costs = CostModel(settings.cost_overrides)
+        self.sizer = PositionSizer(self.costs, slippage_pct=settings.slippage_pct)
+        self.order_store = OrderStore()
         self.broker = self._build_broker(fyers_session)
+        self.execution = ExecutionEngine(
+            broker=self.broker, risk_engine=self.guardian,
+            order_store=self.order_store, journal=self.journal,
+        )
         self.allocator = CapitalAllocator(settings, chain_fn=getattr(self.feed, "option_chain", None))
 
         # shared state (read by dashboard + LLM tools)
@@ -100,6 +115,7 @@ class TradingEngine:
         self._auto_peak: dict[str, float] = {}     # auto symbol → highest premium seen (trailing exit)
         self._autobot_last_entry = 0.0             # throttle for entry attempts
         self._autobot_broke_at = 0.0               # throttle for "needs top-up" alerts
+        self._autobot_lock = threading.Lock()      # serialises the 2s and 30s callers
         try:
             self._auto_blocked = json.loads(BLOCKED_FILE.read_text(encoding="utf-8"))
         except Exception:
@@ -127,10 +143,12 @@ class TradingEngine:
         if self.s.mode == "live" and self.s.live_trading_confirmed and fyers_session and fyers_session.is_ready():
             from .broker.fyers import FyersBroker
             log.warning("LIVE trading mode ARMED")
-            return FyersBroker(fyers_session, self.guardian, self.s)
+            return FyersBroker(fyers_session, self.guardian, self.s, costs=self.costs)
         if self.s.mode == "live":
             log.warning("mode: live requested but not fully armed — using PAPER broker")
-        return PaperBroker(self.guardian)
+        return PaperBroker(self.guardian, costs=self.costs,
+                           spread_pct=self.s.paper_spread_pct,
+                           slippage_pct=self.s.slippage_pct)
 
     # ── lifecycle ─────────────────────────────────────────────────────────
     def start(self):
@@ -205,7 +223,7 @@ class TradingEngine:
             self._maybe_alert(item, comp)
 
         # enforce SL/targets on open paper positions
-        for fill in self.broker.mark_to_market(quotes):
+        for fill in self.execution.mark_to_market(quotes):
             level = "trade" if (fill.pnl or 0) >= 0 else "warning"
             self.notifier.notify(
                 f"{fill.reason} hit — {fill.symbol}",
@@ -255,7 +273,7 @@ class TradingEngine:
 
         # square-off discipline
         if self.guardian.past_square_off() and not self._squared_off and self.broker.positions():
-            for fill in self.broker.close_all("SQUARE-OFF") or []:
+            for fill in self.execution.close_all("SQUARE-OFF") or []:
                 self._settle_auto_exit(fill, kind="square_off")
             self._squared_off = True
             self.notifier.notify("Square-off", "All intraday positions closed (time rule)", "warning")
@@ -263,7 +281,7 @@ class TradingEngine:
         if not self.guardian.past_square_off():
             self._squared_off = False
 
-        self.last_scan = datetime.now().strftime("%H:%M:%S")
+        self.last_scan = clock.now().strftime("%H:%M:%S")
 
     def _refresh_sentiment(self):
         if time.time() - self._sentiment_at < self.s.sentiment_refresh_min * 60:
@@ -317,18 +335,37 @@ class TradingEngine:
         if not comp.plan or self.wallet.active:
             return
         p = comp.plan
-        side = "BUY" if comp.direction > 0 else "SELL"
-        qty = self.guardian.max_qty_for(p["entry"], p["stop_loss"])
-        if qty <= 0:
+        side = Side.BUY if comp.direction > 0 else Side.SELL
+        sized = self.sizer.size(
+            equity=self.guardian.capital,
+            risk_pct=self.s.risk.max_risk_per_trade_pct,
+            entry=p["entry"], stop_loss=p["stop_loss"],
+            lot_size=max(1, getattr(item, "lot_size", 1) if item.options else 1),
+            segment=segment_for_symbol(item.fyers), side=side.value,
+        )
+        if not sized.ok:
+            self.journal.log("risk", item.name, side.value, comp.score,
+                             message=sized.rejected_reason)
             return
 
-        order = OrderRequest(symbol=item.fyers, side=side, qty=qty,
-                             entry=p["entry"], stop_loss=p["stop_loss"],
-                             target=p["target"], tag=f"composite-{comp.score:.2f}")
-        ok, msg = self.broker.place_order(order)
-        level = "trade" if ok else "warning"
-        self.notifier.notify("Order" if ok else "Order blocked", msg, level)
-        self.journal.log("fill" if ok else "risk", item.name, side, comp.score, message=msg)
+        try:
+            intent = OrderIntent(
+                symbol=item.fyers, side=side, qty=sized.qty,
+                entry=p["entry"], stop_loss=p["stop_loss"], target=p["target"],
+                lot_size=max(1, getattr(item, "lot_size", 1) if item.options else 1),
+                strategy_id=f"composite-{comp.score:.2f}",
+                signal_id=f"{item.name}:{comp.score:.3f}",
+                reason_codes=tuple(v.strategy for v in comp.votes
+                                   if v.direction == comp.direction),
+                tag="composite",
+            )
+        except ValueError as e:
+            log.warning("signal intent rejected at construction: %s", e)
+            return
+
+        result = self.execution.submit(intent)
+        self.notifier.notify("Order" if result.ok else "Order blocked",
+                             result.message, "trade" if result.ok else "warning")
 
     def _enforce_orphan_autos(self, quotes: dict[str, float]):
         """SL/target discipline for auto trades the broker no longer holds
@@ -361,7 +398,7 @@ class TradingEngine:
             reason, price = hit
             pnl = (price - t.entry) * t.qty * (1 if long else -1)
             fill = Fill(t.symbol, "SELL" if long else "BUY", t.qty, price,
-                        datetime.now(), pnl=pnl, reason=reason)
+                        clock.now(), pnl=pnl, reason=reason)
             self.guardian.on_exit(pnl)
             self.notifier.notify(
                 f"{reason} hit — {t.name}",
@@ -379,117 +416,6 @@ class TradingEngine:
             BLOCKED_FILE.write_text(json.dumps(self._auto_blocked), encoding="utf-8")
         except Exception as e:
             log.debug("blocked-file save failed: %s", e)
-
-    def _option_leg_candidates(self, item, comp, cash: float, max_risk: float) -> list[dict]:
-        """All tradable ATM legs for one index view: BUY the move (CE/PE) and
-        SELL the far side (theta income), each sized to the cash available."""
-        chain_fn = getattr(self.feed, "option_chain", None)
-        if not chain_fn:
-            return []
-        try:
-            chain = chain_fn(item.fyers, 3) or {}
-        except Exception as e:
-            log.debug("chain fetch failed for %s: %s", item.name, e)
-            return []
-        rows = chain.get("optionsChain", [])
-        spot = comp.snapshot["ltp"]
-
-        def atm(ot):
-            cands = [r for r in rows if r.get("option_type") == ot
-                     and r.get("strike_price", 0) > 0 and r.get("ltp", 0) > 0]
-            return min(cands, key=lambda r: abs(r["strike_price"] - spot)) if cands else None
-
-        bullish = comp.direction > 0
-        lot = max(1, item.lot_size)
-        rr = self.s.risk.min_reward_risk
-        legs: list[dict] = []
-        for action, ot in (("BUY", "CE" if bullish else "PE"),      # own the move
-                           ("SELL", "PE" if bullish else "CE")):    # collect theta
-            row = atm(ot)
-            if row is None:
-                continue
-            prem = float(row["ltp"])
-            blocked_per_lot = (prem * lot if action == "BUY"
-                               else prem * lot + SHORT_MARGIN_PCT * row["strike_price"] * lot)
-            lots = int(cash * 0.98 / blocked_per_lot)
-            if lots <= 0:
-                legs.append({"skip": f"{item.name} {action} ATM {ot}: 1 lot needs "
-                                     f"₹{blocked_per_lot:,.0f}"})
-                continue
-            qty = lots * lot
-            sl_dist = min(prem * OPTION_SL_PCT, max_risk / qty)
-            if action == "SELL":
-                sl_dist = min(sl_dist, max(0.0, prem - 0.05) / rr)  # target premium stays > 0
-            if sl_dist < prem * OPTION_SL_FLOOR:
-                legs.append({"skip": f"{item.name} {action} ATM {ot}: risk cap would force the "
-                                     f"SL tighter than {OPTION_SL_FLOOR:.0%} of premium (churn)"})
-                continue
-            sl = round(prem - sl_dist, 2) if action == "BUY" else round(prem + sl_dist, 2)
-            tgt = round(prem + sl_dist * rr, 2) if action == "BUY" else round(prem - sl_dist * rr, 2)
-            profit_if_tgt = sl_dist * rr * qty
-            blocked = round(blocked_per_lot * lots, 2)
-            # momentum favours owning the option; moderate conviction favours theta
-            pref = 1.0 if ((action == "BUY") == (comp.score >= STRONG_SCORE)) else 0.85
-            legs.append({
-                "item": item, "comp": comp, "action": action, "ot": ot,
-                "symbol": row.get("symbol", ""), "strike": row["strike_price"],
-                "premium": prem, "lot": lot, "lots": lots, "qty": qty,
-                "sl": sl, "target": tgt, "blocked": blocked,
-                "profit_if_target": round(profit_if_tgt, 2),
-                "score": comp.score * pref * (profit_if_tgt / blocked),
-            })
-        return legs
-
-    def _wallet_deploy_best(self):
-        """Rank every affordable option play across the focus indices by
-        conviction × return-on-blocked-capital and take the best one."""
-        w = self.wallet.state()
-        cash = w["cash"]
-        max_risk = self.guardian.capital * self.s.risk.max_risk_per_trade_pct / 100
-        focus = set(self.s.auto_invest_focus or [x.name for x in self.s.watchlist])
-        items = {x.name: x for x in self.s.watchlist}
-        cands, skips = [], []
-        for name, comp in self.latest_signals.items():
-            item = items.get(name)
-            if (item is None or name not in focus or not item.fyers.endswith("-INDEX")
-                    or comp.direction == 0 or comp.score < self.s.signal_threshold):
-                continue
-            for leg in self._option_leg_candidates(item, comp, cash, max_risk):
-                (skips if "skip" in leg else cands).append(leg)
-        for sk in skips:
-            self.journal.log("risk", "auto-invest", "", 0.0, message=sk["skip"])
-        if not cands:
-            if skips:
-                self.notifier.notify(
-                    "Auto-invest needs a top-up",
-                    f"Wallet cash ₹{cash:,.0f} can't afford any focus-index option — "
-                    f"cheapest: {skips[0]['skip']}", "info")
-            return
-        best = max(cands, key=lambda c: c["score"])
-        order = OrderRequest(symbol=best["symbol"], side=best["action"], qty=best["qty"],
-                             entry=best["premium"], stop_loss=best["sl"],
-                             target=best["target"], tag=f"auto-opt-{best['comp'].score:.2f}")
-        ok, msg = self.broker.place_order(order)
-        self.journal.log("fill" if ok else "risk", best["item"].name, best["action"],
-                         best["comp"].score, message=msg,
-                         considered=[f"{c['item'].name} {c['action']} {c['ot']} "
-                                     f"(score {c['score']:.3f})" for c in cands])
-        if not ok:
-            self.notifier.notify("Order blocked", msg, "warning")
-            return
-        name = f"{best['item'].name} {best['strike']:.0f} {best['ot']}"
-        self.wallet.on_entry(best["blocked"], best["symbol"],
-                             f"{best['action']} {best['lots']} lot {name} @ {best['premium']}")
-        self._auto_blocked[best["symbol"]] = best["blocked"]
-        self._save_blocked()
-        self.tracker.add(best["symbol"], name, best["action"], best["qty"],
-                         best["premium"], best["sl"], best["target"], source="auto")
-        self._opt_underlying[best["symbol"]] = best["item"].fyers
-        self.notifier.notify(
-            "Auto-invest — best pick",
-            f"{best['action']} {best['lots']}×lot {name} @ ₹{best['premium']} · "
-            f"₹{best['blocked']:,.0f} blocked · SL {best['sl']} · target {best['target']} · "
-            f"chosen from {len(cands)} candidate leg(s)", "trade")
 
     # ── stop-out re-entry ─────────────────────────────────────────────────
     def watch_reentry_for(self, symbol: str, side: str, stopped_price: float):
@@ -511,7 +437,7 @@ class TradingEngine:
             return
         self._reentry[symbol] = {
             "name": item.name, "side": side, "stopped_at": stopped_price,
-            "at": time.time(), "ts": datetime.now().strftime("%H:%M:%S"),
+            "at": time.time(), "ts": clock.now().strftime("%H:%M:%S"),
         }
         self.notifier.notify(
             f"🔁 Watching {item.name} for re-entry",
@@ -525,7 +451,7 @@ class TradingEngine:
         if self.guardian.past_square_off():
             self._reentry.clear()
             return
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = clock.trading_day()
         if self._reentry_day != today:
             self._reentry_day, self._reentry_count = today, {}
         items = {w.fyers: w for w in self.s.watchlist}
@@ -592,14 +518,26 @@ class TradingEngine:
     def _autobot_step(self, quotes: dict[str, float]) -> None:
         """One cycle of the auto-bot, driven by live ticks (called ~every 2s):
         ride open positions and exit the instant the up-move turns, then redeploy
-        idle wallet cash the moment a focus index is trending up again."""
+        idle wallet cash the moment a focus index is trending up again.
+
+        D15 fix: this is called from BOTH the 2s fast loop and the 30s scan
+        loop, on different threads. The "is a position already open?" check
+        followed by wallet+tracker writes was a textbook check-then-act race —
+        two threads could both observe "no position" and both enter. The lock
+        makes one auto-bot cycle atomic; `_autobot_busy` skips (rather than
+        queues) an overlapping cycle so the fast loop never backs up.
+        """
         if not self.wallet.active:
             return
+        if not self._autobot_lock.acquire(blocking=False):
+            return   # another thread is mid-cycle; its result will be current
         try:
             self._autobot_manage_exits(quotes)
             self._autobot_maybe_enter(quotes)
         except Exception:
             log.debug("autobot step failed", exc_info=True)
+        finally:
+            self._autobot_lock.release()
 
     def _autobot_manage_exits(self, quotes: dict[str, float]) -> None:
         for t in [x for x in self.tracker.open_trades() if x.source == "auto"]:
@@ -628,9 +566,24 @@ class TradingEngine:
                 self._autobot_exit(t, ltp, reason)
 
     def _autobot_exit(self, t, price: float, reason: str) -> None:
-        pnl = (price - t.entry) * t.qty        # long-only
-        fill = Fill(t.symbol, "SELL", t.qty, price, datetime.now(), pnl=pnl, reason=reason)
+        """Exit through the ExecutionEngine so the fill reaches the risk engine.
+
+        D1/D2 fix: this previously synthesised a Fill locally and settled it
+        straight into the wallet, so `guardian.on_exit()` was never called and
+        the daily-drawdown kill switch could not see a single auto-bot rupee.
+        """
         self._auto_peak.pop(t.symbol, None)
+        fill = self.execution.close(t.symbol, reason, price)
+        if fill is None:
+            # Broker no longer holds it (restart, or an external exit). Settle
+            # from the observed price, but still tell the risk engine.
+            gross, net, costs = self.costs.net_pnl(
+                segment_for_symbol(t.symbol), t.side, t.entry, price, t.qty)
+            fill = Fill(t.symbol, "SELL" if t.side == "BUY" else "BUY", t.qty, price,
+                        clock.now(), pnl=net, gross_pnl=gross,
+                        costs=costs.total, reason=reason)
+            self.guardian.on_exit(net, symbol=t.symbol, reason=reason,
+                                  fees=costs.total)
         self._settle_auto_exit(fill, kind="square_off" if "SQUARE" in reason else "exit")
 
     def _autobot_maybe_enter(self, quotes: dict[str, float]) -> None:
@@ -666,34 +619,72 @@ class TradingEngine:
             return
         row = min(ce, key=lambda r: abs(r["strike_price"] - spot))   # ATM call = ride the up-move
         prem, lot = float(row["ltp"]), max(1, item.lot_size)
-        lots = int(cash * 0.98 / (prem * lot))
-        if lots <= 0:
-            if time.time() - self._autobot_broke_at > 120:   # don't spam every cycle
-                self._autobot_broke_at = time.time()
-                self.notifier.notify("Auto-bot needs a top-up",
-                                     f"Wallet ₹{cash:,.0f} can't afford 1 lot of {item.name} "
-                                     f"{row['strike_price']:.0f} CE (needs ₹{prem*lot:,.0f}). Add money to trade.",
-                                     "info")
-            return
-        qty = lots * lot
-        cost = round(prem * qty, 2)
         sym = row.get("symbol", "")
         sl = round(prem * (1 - AUTOBOT_HARD_SL_PCT), 2)
         tgt = round(prem * (1 + AUTOBOT_TARGET_PCT), 2)
         name = f"{item.name} {row['strike_price']:.0f} CE"
-        if not self.wallet.on_entry(cost, sym, f"BUY {lots} lot {name} @ {prem}"):
+
+        # ── D1 FIX ────────────────────────────────────────────────────────
+        # Size by RISK, not by `cash * 0.98`. The old line committed ~98% of
+        # the wallet to one ATM call which, with a 25% stop, risked ~24.5% of
+        # the account on a single trade while the README promised 1%.
+        sized = self.sizer.size(
+            equity=self.guardian.capital,
+            risk_pct=self.s.risk.max_risk_per_trade_pct,
+            entry=prem, stop_loss=sl, lot_size=lot,
+            segment=Segment.OPT, side="BUY",
+            available_capital=cash, margin_per_lot=prem * lot,
+        )
+        if not sized.ok:
+            if time.time() - self._autobot_broke_at > 120:   # don't spam every cycle
+                self._autobot_broke_at = time.time()
+                self.notifier.notify("Auto-bot stood down", sized.rejected_reason, "info")
+                self.journal.log("risk", item.name, "BUY", comp.score,
+                                 message=sized.rejected_reason, **sized.as_dict())
+            return
+
+        # Every autonomous entry now builds an immutable intent and hands it to
+        # the ExecutionEngine, which risk-checks it before any broker sees it.
+        try:
+            intent = OrderIntent(
+                symbol=sym, side=Side.BUY, qty=sized.qty, entry=prem,
+                stop_loss=sl, target=tgt, lot_size=lot,
+                strategy_id="autobot-trend", signal_id=f"{item.name}:{comp.score:.3f}",
+                reason_codes=("FOCUS_INDEX_UPTREND", f"SCORE_{comp.score:.2f}"),
+                underlying=item.fyers, tag="autobot",
+            )
+        except ValueError as e:
+            log.warning("auto-bot intent rejected at construction: %s", e)
+            return
+
+        result = self.execution.submit(intent)
+        if not result.ok:
+            if time.time() - self._autobot_broke_at > 120:
+                self._autobot_broke_at = time.time()
+                self.notifier.notify("Auto-bot entry blocked", result.message, "warning")
+            return
+
+        fill = result.record
+        fill_price = fill.fill_price if fill and fill.fill_price else prem
+        cost = round(fill_price * sized.qty, 2)
+
+        # Wallet accounting happens only AFTER the order actually filled.
+        if not self.wallet.on_entry(cost, sym, f"BUY {sized.lots} lot {name} @ {fill_price}"):
+            log.error("wallet could not fund a FILLED order — closing immediately")
+            self.execution.close(sym, "WALLET-UNFUNDED")
             return
         self._auto_blocked[sym] = cost
         self._save_blocked()
-        self.tracker.add(sym, name, "BUY", qty, prem, sl, tgt, source="auto")
+        self.tracker.add(sym, name, "BUY", sized.qty, fill_price, sl, tgt, source="auto")
         self._opt_underlying[sym] = item.fyers
-        self._auto_peak[sym] = prem
+        self._auto_peak[sym] = fill_price
         if self.ticks:
             self.ticks.subscribe([sym])
         self.notifier.notify(
             "🤖 Auto-bot bought the uptrend",
-            f"BUY {lots}×lot {name} @ ₹{prem} · ₹{cost:,.0f} deployed ({item.name} up "
-            f"{comp.score:.0%}) · rides up, exits the moment it turns", "trade")
+            f"BUY {sized.lots}×lot {name} @ ₹{fill_price} · ₹{cost:,.0f} deployed "
+            f"({item.name} up {comp.score:.0%}) · risking ₹{sized.max_loss:,.0f} "
+            f"of a ₹{sized.risk_budget:,.0f} budget · exits the moment it turns", "trade")
 
     # ── auto-invest wallet ────────────────────────────────────────────────
     def activate_wallet(self, amount: float) -> dict:
@@ -722,8 +713,7 @@ class TradingEngine:
     def stop_wallet(self) -> dict:
         # flatten auto positions first so every rupee is back in cash
         for t in [x for x in self.tracker.open_trades() if x.source == "auto"]:
-            close_symbol = getattr(self.broker, "close_symbol", None)
-            fill = close_symbol(t.symbol, "WALLET-STOP") if close_symbol else None
+            fill = self.execution.close(t.symbol, "WALLET-STOP")
             if fill:
                 self._settle_auto_exit(fill)
             else:   # live broker or position already gone — settle at entry (flat)
