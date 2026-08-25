@@ -208,6 +208,13 @@ class TradingEngine:
 
     # ── one scan cycle ────────────────────────────────────────────────────
     def _scan(self):
+        # Retire expired option contracts before anything else reads the
+        # tracker — they have no quote and can never close on their own.
+        for t in self.tracker.expire_stale_options():
+            log.warning("tracked trade %s expired (%s) — marked EXPIRED, "
+                        "reconcile P&L from your contract note", t.id, t.name)
+            self.journal.log("expired", t.name, t.side, 0.0, trade_id=t.id)
+
         self._refresh_sentiment()
         bias = self.market_sentiment.bias if self.market_sentiment else 0.0
 

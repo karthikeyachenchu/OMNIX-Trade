@@ -10,22 +10,108 @@
 <title>OMNIX-Trade</title>
 <style>
   :root {
-    --page:      #08080a;
-    --surface:   #121216;
-    --surface-2: #1a1a21;
-    --surface-3: #22222b;
-    --ink:       #f4f2ff;
-    --ink-2:     #c6c3d4;
-    --muted:     #8a8794;
+    /* ══ TRADE SENTINEL DESIGN SYSTEM v2 ═══════════════════════════════
+       Principles: calm over loud · the number is the hero ·
+       every score explainable · empty is a designed state ·
+       motion clarifies, never entertains.                            */
+
+    /* ── surfaces: near-black with a violet cast ── */
+    --bg-base:      #08080b;
+    --bg-sunken:    #050507;
+    --bg-surface:   #101015;
+    --bg-raised:    #17171f;
+    --bg-overlay:   #1e1e28;
+
+    /* ── ink ── */
+    --ink-hi:       #f5f3fb;
+    --ink-mid:      #c9c5d8;
+    --ink-lo:       #8a8698;
+    --ink-faint:    #5a5768;
+
+    /* ── lines ── */
+    --line:         rgba(200,182,255,0.10);
+    --line-strong:  rgba(200,182,255,0.20);
+    --line-focus:   #a78bfa;
+
+    /* ── brand ── */
+    --brand:        #c8b6ff;
+    --brand-deep:   #8b5cf6;
+    --brand-glow:   rgba(139,92,246,0.30);
+
+    /* ── market direction ── */
+    --up:           #34d399;
+    --up-dim:       rgba(52,211,153,0.14);
+    --down:         #fb7185;   /* rose — pure red is reserved for risk */
+    --down-dim:     rgba(251,113,133,0.14);
+    --flat:         #94a3b8;
+
+    /* ── triage: the productivity layer ── */
+    --needs-you:     #fbbf24;
+    --needs-you-dim: rgba(251,191,36,0.13);
+    --watching:      #7dd3fc;
+    --watching-dim:  rgba(125,211,252,0.10);
+    --ignore:        #4b4859;
+
+    /* ── risk (pure red lives ONLY here) ── */
+    --danger:       #ef4444;
+    --danger-dim:   rgba(239,68,68,0.12);
+    --safe:         #22c55e;
+
+    /* ── space (4px base) ── */
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px;
+    --s5:20px; --s6:24px; --s8:32px; --s10:40px; --s12:48px;
+
+    /* ── radius ── */
+    --r-sm:8px; --r-md:12px; --r-lg:16px; --r-xl:20px; --r-full:999px;
+
+    /* ── elevation ── */
+    --e1: 0 1px 2px rgba(0,0,0,.4);
+    --e2: 0 4px 16px rgba(0,0,0,.45);
+    --e3: 0 12px 40px rgba(0,0,0,.55);
+    --e-glow: 0 0 0 1px var(--line-strong), 0 8px 32px var(--brand-glow);
+
+    /* ── motion ── */
+    --dur-fast: 120ms;
+    --dur-base: 220ms;
+    --dur-slow: 420ms;
+    --ease-out:    cubic-bezier(.2,.7,.3,1);
+    --ease-inout:  cubic-bezier(.4,0,.2,1);
+    --ease-spring: cubic-bezier(.34,1.4,.5,1);
+
+    /* ── type ── */
+    --font-ui:   "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, "Cascadia Code", "Consolas", monospace;
+
+    /* ══ LEGACY ALIASES — existing CSS keeps working ══ */
+    --page:      var(--bg-base);
+    --surface:   var(--bg-surface);
+    --surface-2: var(--bg-raised);
+    --surface-3: var(--bg-overlay);
+    --ink:       var(--ink-hi);
+    --ink-2:     var(--ink-mid);
+    --muted:     var(--ink-lo);
     --grid:      #26262e;
-    --border:    rgba(200,182,255,0.12);
-    --good:      #22c55e;
-    --critical:  #ef4444;
-    --warning:   #fab219;
-    --accent:    #c8b6ff;      /* OMNIX lavender */
-    --accent-2:  #8b5cf6;      /* deep purple */
-    --glow:      rgba(139,92,246,0.35);
+    --border:    var(--line);
+    --good:      var(--up);
+    --critical:  var(--down);
+    --warning:   var(--needs-you);
+    --accent:    var(--brand);
+    --accent-2:  var(--brand-deep);
+    --glow:      var(--brand-glow);
   }
+
+  /* Numbers must never jitter as they tick at 4 Hz. */
+  .value, .ltp, .num, .tile .value, .t-num,
+  td, th, .kv, .money { font-variant-numeric: tabular-nums; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important; scroll-behavior: auto !important;
+    }
+  }
+
+  :focus-visible { outline: 2px solid var(--line-focus); outline-offset: 2px; border-radius: 4px; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   body {
@@ -51,6 +137,12 @@
   .badge.live  { color: var(--critical); border-color: var(--critical);
                  animation: pulse 2s infinite; }
   .badge.open  { color: var(--good); border-color: rgba(34,197,94,.4); }
+  /* Replayed data must never be mistakable for live data. */
+  .badge.replay { color: #fbbf24; border-color: rgba(251,191,36,.5);
+                  background: rgba(251,191,36,.10); letter-spacing: .5px;
+                  animation: replayPulse 2.4s ease-in-out infinite; }
+  @keyframes replayPulse { 0%,100% { opacity: 1 } 50% { opacity: .55 } }
+  @media (prefers-reduced-motion: reduce) { .badge.replay { animation: none } }
   @keyframes pulse { 50% { box-shadow: 0 0 12px var(--critical); } }
   .spacer { flex: 1; }
   .meta { color: var(--muted); font-size: 12px; }
@@ -263,6 +355,219 @@
     .wordmark { font-size: 15px; letter-spacing: 2px; }
     .meta { display: none; }
   }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     BRIEFING — the hero screen. Makes the productivity claim legible
+     before the reader parses a single word.
+     ══════════════════════════════════════════════════════════════════════ */
+
+  .brief-hero { padding: var(--s6) 0 var(--s5); }
+  .brief-greet { font-size: 26px; font-weight: 700; letter-spacing: -.4px;
+                 color: var(--ink-hi); margin-bottom: var(--s1); }
+  .brief-sub   { font-size: 14px; color: var(--ink-lo); }
+  .brief-sub b { color: var(--brand); font-weight: 600; }
+  .brief-when  { float: right; text-align: right; font-size: 12.5px;
+                 color: var(--ink-lo); line-height: 1.7; }
+  .brief-when .clock { font-size: 15px; color: var(--ink-mid); font-weight: 600;
+                       font-variant-numeric: tabular-nums; }
+
+  /* ── the three proof tiles ── */
+  .proof { display: grid; grid-template-columns: repeat(3, 1fr);
+           gap: var(--s3); margin: var(--s5) 0 var(--s8); }
+  @media (max-width: 820px) { .proof { grid-template-columns: 1fr; } }
+  .proof-tile { position: relative; background: var(--bg-surface);
+                border: 1px solid var(--line); border-radius: var(--r-lg);
+                padding: var(--s5) var(--s5) var(--s4);
+                transition: border-color var(--dur-base) var(--ease-out),
+                            transform var(--dur-base) var(--ease-out); }
+  .proof-tile:hover { border-color: var(--line-strong); transform: translateY(-2px); }
+  .proof-tile .big { font-size: 34px; line-height: 1.1; font-weight: 700;
+                     letter-spacing: -1px; font-variant-numeric: tabular-nums;
+                     color: var(--ink-hi); }
+  .proof-tile .big .unit { font-size: 19px; font-weight: 600; color: var(--ink-lo);
+                           margin-left: 2px; letter-spacing: 0; }
+  .proof-tile .cap { font-size: 10.5px; font-weight: 700; letter-spacing: .9px;
+                     text-transform: uppercase; color: var(--ink-lo);
+                     margin-top: var(--s2); }
+  .proof-tile .foot { font-size: 12px; color: var(--ink-faint); margin-top: var(--s1); }
+  .proof-tile.accent .big { color: var(--brand); }
+  .proof-tile .info { position: absolute; top: 12px; right: 12px; width: 17px; height: 17px;
+                      border-radius: 50%; border: 1px solid var(--line-strong);
+                      color: var(--ink-faint); font-size: 10.5px; font-weight: 700;
+                      display: grid; place-items: center; cursor: help;
+                      background: transparent; padding: 0; }
+  .proof-tile .info:hover { color: var(--brand); border-color: var(--brand); }
+
+  /* the triage arrow: 21 → 2 — the whole thesis in one glyph */
+  .triage-num { display: flex; align-items: baseline; gap: 10px; }
+  .triage-num .from { color: var(--ink-faint); }
+  .triage-num .arrow { font-size: 22px; color: var(--ink-faint); font-weight: 400; }
+  .triage-num .to { color: var(--needs-you); }
+
+  /* ── zone headers ── */
+  .zone { margin-bottom: var(--s6); }
+  .zone-head { display: flex; align-items: center; gap: var(--s3);
+               padding: var(--s2) 0 var(--s3); }
+  .zone-mark { width: 3px; height: 15px; border-radius: 2px; background: var(--ink-faint); }
+  .zone-title { font-size: 11.5px; font-weight: 700; letter-spacing: 1.1px;
+                text-transform: uppercase; color: var(--ink-lo); }
+  .zone-count { font-size: 11.5px; font-weight: 700; padding: 2px 9px;
+                border-radius: var(--r-full); background: var(--bg-raised);
+                color: var(--ink-mid); font-variant-numeric: tabular-nums; }
+  .zone-note { font-size: 12px; color: var(--ink-faint); margin-left: auto; }
+
+  .zone.needs .zone-mark  { background: var(--needs-you); box-shadow: 0 0 10px var(--needs-you); }
+  .zone.needs .zone-title { color: var(--needs-you); }
+  .zone.needs .zone-count { background: var(--needs-you-dim); color: var(--needs-you); }
+  .zone.watch .zone-mark  { background: var(--watching); }
+  .zone.watch .zone-title { color: var(--watching); }
+  .zone.watch .zone-count { background: var(--watching-dim); color: var(--watching); }
+
+  /* collapsible zones */
+  .zone details > summary { list-style: none; cursor: pointer; }
+  .zone details > summary::-webkit-details-marker { display: none; }
+  .zone details > summary .chev { margin-left: var(--s2); color: var(--ink-faint);
+                                  transition: transform var(--dur-base) var(--ease-out);
+                                  display: inline-block; }
+  .zone details[open] > summary .chev { transform: rotate(90deg); }
+
+  /* ── NEEDS YOU card ── */
+  .tcard { background: var(--bg-surface); border: 1px solid var(--line);
+           border-left: 3px solid var(--needs-you); border-radius: var(--r-lg);
+           padding: var(--s4) var(--s5); margin-bottom: var(--s3);
+           transition: border-color var(--dur-base) var(--ease-out),
+                       box-shadow var(--dur-base) var(--ease-out); }
+  .tcard:hover { box-shadow: var(--e2); border-color: var(--line-strong);
+                 border-left-color: var(--needs-you); }
+  .tcard.promoted { animation: promote var(--dur-slow) var(--ease-out); }
+  @keyframes promote {
+    from { transform: translateY(14px); opacity: 0; background: var(--needs-you-dim); }
+  }
+  .tcard-top { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
+  .tcard-sym { font-size: 16px; font-weight: 700; color: var(--ink-hi);
+               letter-spacing: -.2px; }
+  .tcard-ltp { font-size: 19px; font-weight: 650; color: var(--ink-hi);
+               font-variant-numeric: tabular-nums; }
+  .tcard-chg { font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tcard-spacer { flex: 1; }
+  .pill { font-size: 11px; font-weight: 700; letter-spacing: .5px; padding: 3px 10px;
+          border-radius: var(--r-full); text-transform: uppercase; }
+  .pill.buy  { background: var(--up-dim);   color: var(--up); }
+  .pill.sell { background: var(--down-dim); color: var(--down); }
+  .pill.hold { background: rgba(148,163,184,.12); color: var(--flat); }
+  .pill.risk { background: var(--danger-dim); color: var(--danger); }
+
+  /* ── VoteStrip: 7 strategies, one glance, hoverable ── */
+  .votestrip { display: flex; gap: 3px; margin: var(--s3) 0 var(--s2); }
+  .vote { flex: 1; height: 7px; border-radius: 2px; background: var(--bg-raised);
+          position: relative; cursor: help;
+          transition: transform var(--dur-fast) var(--ease-out); }
+  .vote:hover { transform: scaleY(1.7); }
+  .vote.up   { background: var(--up); }
+  .vote.down { background: var(--down); }
+  .vote.flat { background: var(--ignore); }
+  .vote-legend { font-size: 12px; color: var(--ink-lo); margin-bottom: var(--s3); }
+  .vote-legend b { color: var(--ink-mid); font-weight: 650; }
+
+  /* ── plan block ── */
+  .planbox { background: var(--bg-sunken); border: 1px solid var(--line);
+             border-radius: var(--r-md); padding: var(--s3) var(--s4);
+             margin-top: var(--s3); font-size: 13px; color: var(--ink-mid); }
+  .planbox .plabel { font-size: 10px; font-weight: 700; letter-spacing: .9px;
+                     text-transform: uppercase; color: var(--brand);
+                     margin-bottom: var(--s2); }
+  .planrow { display: flex; gap: var(--s5); flex-wrap: wrap;
+             font-variant-numeric: tabular-nums; }
+  .planrow span b { color: var(--ink-hi); font-weight: 650; }
+
+  /* ── explain drawer: every score decomposes into its votes ── */
+  .explain { margin-top: var(--s3); }
+  .explain summary { font-size: 12px; font-weight: 600; color: var(--ink-lo);
+                     cursor: pointer; list-style: none; display: inline-flex;
+                     align-items: center; gap: 5px; padding: 4px 10px;
+                     border: 1px solid var(--line); border-radius: var(--r-full);
+                     transition: color var(--dur-fast), border-color var(--dur-fast); }
+  .explain summary::-webkit-details-marker { display: none; }
+  .explain summary:hover { color: var(--brand); border-color: var(--brand); }
+  .explain[open] summary { color: var(--brand); border-color: var(--line-strong); }
+  .vtable { width: 100%; margin-top: var(--s3); font-size: 12.5px;
+            border-collapse: collapse; }
+  .vtable td { padding: 6px 8px; border-top: 1px solid var(--line);
+               color: var(--ink-mid); vertical-align: top; }
+  .vtable td:first-child { color: var(--ink-lo); white-space: nowrap; width: 1%;
+                           font-family: var(--font-mono); font-size: 11.5px; }
+  .vtable td.d { width: 1%; text-align: center; font-weight: 700; }
+
+  /* ── compact WATCHING / IGNORE rows ── */
+  .trow { display: flex; align-items: center; gap: var(--s3);
+          padding: 9px var(--s4); border-radius: var(--r-sm);
+          border: 1px solid transparent; font-size: 13px;
+          transition: background var(--dur-fast), border-color var(--dur-fast); }
+  .trow:hover { background: var(--bg-surface); border-color: var(--line); }
+  .trow .n    { font-weight: 620; color: var(--ink-mid); min-width: 108px; }
+  .trow .p    { font-variant-numeric: tabular-nums; color: var(--ink-mid);
+                min-width: 92px; text-align: right; }
+  .trow .c    { font-variant-numeric: tabular-nums; font-size: 12px;
+                min-width: 68px; text-align: right; }
+  .trow .s    { font-size: 11.5px; color: var(--ink-faint);
+                font-variant-numeric: tabular-nums; margin-left: auto; }
+  .trow.muted .n, .trow.muted .p { color: var(--ink-faint); }
+
+  /* ── live value flash: the standard trading-terminal idiom ── */
+  @keyframes flash-up   { from { background: var(--up-dim); }   to { background: transparent; } }
+  @keyframes flash-down { from { background: var(--down-dim); } to { background: transparent; } }
+  .fl-up   { animation: flash-up   600ms var(--ease-out); border-radius: 4px; }
+  .fl-down { animation: flash-down 600ms var(--ease-out); border-radius: 4px; }
+
+  /* ── bottom strip: mood + overnight ── */
+  .brief-foot { display: grid; grid-template-columns: 300px 1fr; gap: var(--s3);
+                margin-top: var(--s6); align-items: start; }
+  @media (max-width: 820px) { .brief-foot { grid-template-columns: 1fr; } }
+  .mood-val { font-size: 24px; font-weight: 700; letter-spacing: -.4px; }
+  .mood-bias { font-size: 13px; color: var(--ink-lo); font-variant-numeric: tabular-nums; }
+  .hl { display: flex; gap: var(--s2); padding: 7px 0; font-size: 13px;
+        border-top: 1px solid var(--line); color: var(--ink-mid); }
+  .hl:first-child { border-top: 0; }
+  .hl .dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 6px;
+             flex-shrink: 0; background: var(--flat); }
+  .hl .dot.p { background: var(--up); } .hl .dot.n { background: var(--down); }
+  .hl .src { color: var(--ink-faint); font-size: 11.5px; }
+
+  /* ── designed empty state ── */
+  .estate { text-align: center; padding: var(--s12) var(--s5); }
+  .estate .icon { font-size: 30px; opacity: .35; margin-bottom: var(--s3); }
+  .estate .t { font-size: 15px; font-weight: 620; color: var(--ink-mid);
+               margin-bottom: var(--s2); }
+  .estate .d { font-size: 13px; color: var(--ink-faint); max-width: 420px;
+               margin: 0 auto; line-height: 1.6; }
+
+  /* ── action buttons on cards ── */
+  .tcard-acts { display: flex; gap: var(--s2); margin-top: var(--s3); flex-wrap: wrap;
+                align-items: center; }
+  .abtn { font-size: 12px; font-weight: 600; padding: 6px 14px;
+          border-radius: var(--r-full); border: 1px solid var(--line-strong);
+          background: transparent; color: var(--ink-mid); cursor: pointer;
+          transition: all var(--dur-fast) var(--ease-out); }
+  .abtn:hover { border-color: var(--brand); color: var(--brand);
+                background: rgba(139,92,246,.08); }
+  .abtn:active { transform: scale(.96); }
+  .abtn.primary { background: var(--brand-deep); border-color: var(--brand-deep);
+                  color: #fff; }
+  .abtn.primary:hover { background: var(--brand); border-color: var(--brand);
+                        color: #14101f; }
+  .abtn.on { color: var(--brand); border-color: var(--brand); }
+
+  .tcard .conv { font-size: 12.5px; color: var(--ink-lo);
+                 font-variant-numeric: tabular-nums; }
+  .tcard.urgent { border-left-color: var(--danger); }
+  .tcard.urgent:hover { border-left-color: var(--danger); }
+
+  /* the reasoning drawer is full-width, never squeezed into the button row */
+  .whybox { margin-top: var(--s3); padding-top: var(--s1);
+            border-top: 1px solid var(--line);
+            animation: whyin var(--dur-base) var(--ease-out); }
+  @keyframes whyin { from { opacity: 0; transform: translateY(-4px); } }
+  .whybox[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -274,6 +579,7 @@
   </div>
   <span id="mode" class="badge paper">PAPER</span>
   <span id="market" class="badge">—</span>
+  <span id="replay" class="badge replay" style="display:none">REPLAY</span>
   <span class="spacer"></span>
   <span id="rt" class="badge" title="Real-time data socket">—</span>
   <span class="meta" id="feed"></span>
@@ -281,7 +587,8 @@
 </header>
 
 <nav><div class="tabs" id="tabs">
-  <button class="tab active" data-tab="overview">Overview</button>
+  <button class="tab active" data-tab="briefing">Briefing<span class="n" id="n-needs">0</span></button>
+  <button class="tab" data-tab="overview">Overview</button>
   <button class="tab" data-tab="signals">Signals<span class="n" id="n-signals">0</span></button>
   <button class="tab" data-tab="charts">Charts</button>
   <button class="tab" data-tab="options">Options</button>
@@ -296,8 +603,96 @@
 <main>
 <div id="killbar"></div>
 
+<!-- ═══ BRIEFING — the hero ═══ -->
+<section class="page active" id="page-briefing">
+
+  <div class="brief-hero">
+    <div class="brief-when">
+      <div class="clock" id="bf-clock">—</div>
+      <div id="bf-date">—</div>
+    </div>
+    <div class="brief-greet" id="bf-greet">Good morning</div>
+    <div class="brief-sub" id="bf-sub">Reading your watchlist…</div>
+  </div>
+
+  <div class="proof">
+    <div class="proof-tile accent">
+      <button class="info" id="bf-info" title="How this is calculated" aria-label="How reclaimed time is calculated">i</button>
+      <div class="big" id="bf-reclaimed">—</div>
+      <div class="cap">Attention reclaimed</div>
+      <div class="foot" id="bf-reclaimed-foot">this week</div>
+    </div>
+    <div class="proof-tile">
+      <div class="big triage-num">
+        <span class="from" id="bf-scanned">—</span>
+        <span class="arrow">→</span>
+        <span class="to" id="bf-needs">—</span>
+      </div>
+      <div class="cap">Triaged for you</div>
+      <div class="foot" id="bf-triage-foot">watched, so you don't have to</div>
+    </div>
+    <div class="proof-tile">
+      <div class="big"><span id="bf-budget">—</span></div>
+      <div class="cap">Risk budget left</div>
+      <div class="foot" id="bf-budget-foot">—</div>
+    </div>
+  </div>
+
+  <!-- NEEDS YOU -->
+  <div class="zone needs" id="zone-needs">
+    <div class="zone-head">
+      <span class="zone-mark"></span>
+      <span class="zone-title">Needs you</span>
+      <span class="zone-count" id="cnt-needs" aria-live="polite">0</span>
+      <span class="zone-note">ranked by conviction</span>
+    </div>
+    <div id="bf-needs-list"></div>
+  </div>
+
+  <!-- WATCHING -->
+  <div class="zone watch" id="zone-watch">
+    <details id="det-watch">
+      <summary>
+        <div class="zone-head">
+          <span class="zone-mark"></span>
+          <span class="zone-title">Watching</span>
+          <span class="zone-count" id="cnt-watch">0</span>
+          <span class="zone-note">building, not ready<span class="chev">›</span></span>
+        </div>
+      </summary>
+      <div id="bf-watch-list"></div>
+    </details>
+  </div>
+
+  <!-- IGNORED -->
+  <div class="zone" id="zone-ignore">
+    <details id="det-ignore">
+      <summary>
+        <div class="zone-head">
+          <span class="zone-mark"></span>
+          <span class="zone-title">Handled without you</span>
+          <span class="zone-count" id="cnt-ignore">0</span>
+          <span class="zone-note">nothing to do here<span class="chev">›</span></span>
+        </div>
+      </summary>
+      <div id="bf-ignore-list"></div>
+    </details>
+  </div>
+
+  <div class="brief-foot">
+    <div class="panel">
+      <h2>Market mood</h2>
+      <div id="bf-mood"></div>
+    </div>
+    <div class="panel">
+      <h2>What moved</h2>
+      <div id="bf-news"></div>
+    </div>
+  </div>
+</section>
+
 <!-- ═══ OVERVIEW ═══ -->
-<section class="page active" id="page-overview">
+<section class="page" id="page-overview">
   <div class="tiles" id="tiles"></div>
   <div class="grid2">
     <div>
@@ -469,7 +864,8 @@
 const $ = id => document.getElementById(id);
 const fmt = n => (n >= 0 ? "+" : "") + Number(n).toLocaleString("en-IN", {maximumFractionDigits: 0});
 const money = n => "₹" + Number(n).toLocaleString("en-IN", {maximumFractionDigits: 0});
-const px = n => Number(n).toLocaleString("en-IN", {maximumFractionDigits: 2});
+const px = n => (n == null || !Number.isFinite(Number(n))) ? "—"
+  : Number(n).toLocaleString("en-IN", {maximumFractionDigits: 2});
 const esc = s => { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; };
 const dirIcon = l => l === "BULLISH" ? "▲" : l === "BEARISH" ? "▼" : "•";
 const dirClass = l => l === "BULLISH" ? "pos" : l === "BEARISH" ? "neg" : "";
@@ -499,7 +895,7 @@ document.addEventListener("click", e => {
 });
 
 /* ── tabs ───────────────────────────────────────────────────────────────── */
-let activeTab = "overview";
+let activeTab = "briefing";
 function moveTabline() {
   const t = document.querySelector(`.tab[data-tab="${activeTab}"]`);
   if (!t) return;
@@ -529,13 +925,312 @@ function renderInto(el, html) {
   el.querySelectorAll("details[data-key]").forEach(d => { if (open.has(d.dataset.key)) d.open = true; });
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   TRIAGE ENGINE — the productivity core.
+   Every symbol, every scan, lands in exactly one bucket. The bucket
+   assignment IS the product; everything else is supporting evidence.
+   ══════════════════════════════════════════════════════════════════════════ */
+const T_NEEDS = 0.55;   // == engine.signal_threshold in config.yaml
+const T_WATCH = 0.35;
+const NEAR_STOP_PCT = 0.003;   // within 0.3% of your stop → demands attention
+
+function triage(s) {
+  const needs = [], watch = [], ignore = [];
+  const tracked = s.tracked || [];
+
+  // a tracked trade sitting on its stop outranks any signal
+  const urgent = new Map();
+  for (const t of tracked) {
+    if (t.ltp == null || !t.sl) continue;
+    const dist = Math.abs(t.ltp - t.sl) / t.ltp;
+    if (dist <= NEAR_STOP_PCT) urgent.set(t.name, t);
+  }
+
+  for (const c of (s.signals || [])) {
+    const live = urgent.get(c.name);
+    if (live) { needs.push({...c, why: "stop", trade: live}); continue; }
+    if (c.score >= T_NEEDS && c.label !== "NEUTRAL") needs.push({...c, why: "signal"});
+    else if (c.score >= T_WATCH) watch.push(c);
+    else ignore.push(c);
+  }
+  // any near-stop trade not on the watchlist still deserves the top zone
+  for (const [name, t] of urgent) {
+    if (!needs.some(n => n.name === name))
+      needs.push({name, label: t.side === "BUY" ? "BULLISH" : "BEARISH", score: 1,
+                  ltp: t.ltp, change_pct: 0, votes: [], plan: {},
+                  why: "stop", trade: t});
+  }
+  needs.sort((a, b) => (a.why === "stop" ? -1 : b.why === "stop" ? 1 : b.score - a.score));
+  watch.sort((a, b) => b.score - a.score);
+  ignore.sort((a, b) => b.score - a.score);
+  return {needs, watch, ignore};
+}
+
+/* ── attention-reclaimed model ────────────────────────────────────────────
+   MODELLED, not measured — and labelled as such everywhere it appears.
+   45s of manual review per symbol scanned, minus 90s actually spent on
+   each alert that was raised to the user.                                  */
+const REVIEW_SEC = 45, ATTEND_SEC = 90;
+let RECLAIM = {signals: 0, alerts: 0, guards: 0, loaded: false};
+
+async function loadReclaim() {
+  try {
+    const r = await fetch("/api/journal?limit=3000");
+    const {events} = await r.json();
+    const since = Date.now() - 7 * 864e5;
+    let sig = 0, alr = 0, grd = 0;
+    for (const e of events || []) {
+      if (new Date(e.ts).getTime() < since) continue;
+      if (e.kind === "signal") sig++;
+      else if (e.kind === "alert") alr++;
+      else if (e.kind === "risk") grd++;
+    }
+    RECLAIM = {signals: sig, alerts: alr, guards: grd, loaded: true};
+  } catch (_) { RECLAIM.loaded = true; }
+}
+function reclaimedText() {
+  if (!RECLAIM.loaded) return {v: "—", u: ""};
+  const secs = Math.max(0, RECLAIM.signals * REVIEW_SEC - RECLAIM.alerts * ATTEND_SEC);
+  const h = Math.floor(secs / 3600), m = Math.round((secs % 3600) / 60);
+  if (secs < 60) return {v: "0", u: "m"};
+  return h ? {v: `${h}h ${m}`, u: "m"} : {v: `${m}`, u: "m"};
+}
+
+/* ── live-value flash: the standard trading-terminal idiom ── */
+const PREV_LTP = new Map();
+function paintLive(root) {
+  root.querySelectorAll("[data-ltp]").forEach(el => {
+    const k = el.dataset.ltp, v = Number(el.dataset.v);
+    const p = PREV_LTP.get(k);
+    if (p != null && v !== p) {
+      el.classList.remove("fl-up", "fl-down");
+      void el.offsetWidth;                       // restart the animation
+      el.classList.add(v > p ? "fl-up" : "fl-down");
+    }
+    if (!Number.isNaN(v)) PREV_LTP.set(k, v);
+  });
+}
+
+/* ── the briefing screen ── */
+let BF_KEY = "", BF_SEEN = new Set();
+
+function greetFor(h) {
+  return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+}
+
+function voteStrip(votes) {
+  if (!votes || !votes.length) return "";
+  const cells = votes.map(v => {
+    const cls = v.d > 0 ? "up" : v.d < 0 ? "down" : "flat";
+    return `<div class="vote ${cls}" title="${esc(v.s)} — ${esc(v.r)}"></div>`;
+  }).join("");
+  const agree = votes.filter(v => v.d !== 0).length;
+  return `<div class="votestrip">${cells}</div>
+    <div class="vote-legend"><b>${agree} of ${votes.length}</b> strategies have a view</div>`;
+}
+
+function voteTable(votes) {
+  if (!votes || !votes.length) return `<div class="vote-legend">No strategy detail.</div>`;
+  return `<table class="vtable">${votes.map(v => `
+    <tr><td>${esc(v.s)}</td>
+        <td class="d" style="color:${v.d > 0 ? "var(--up)" : v.d < 0 ? "var(--down)" : "var(--ink-faint)"}">
+          ${v.d > 0 ? "▲" : v.d < 0 ? "▼" : "•"}</td>
+        <td>${esc(v.r)}</td></tr>`).join("")}</table>`;
+}
+
+function needsCard(c) {
+  const up = c.label === "BULLISH";
+  const pillCls = c.why === "stop" ? "risk" : up ? "buy" : c.label === "BEARISH" ? "sell" : "hold";
+  const pillTxt = c.why === "stop" ? "AT YOUR STOP" : c.label;
+  const chgCls = c.change_pct >= 0 ? "pos" : "neg";
+  const p = c.plan || {};
+  const fresh = !BF_SEEN.has(c.name);
+
+  const stopLine = c.why === "stop" && c.trade ? `
+    <div class="planbox" style="border-color:var(--danger)">
+      <div class="plabel" style="color:var(--danger)">Needs a decision</div>
+      Your ${esc(c.trade.side)} in <b style="color:var(--ink-hi)">${esc(c.trade.name)}</b>
+      is <b style="color:var(--ink-hi)">${px(Math.abs(c.trade.ltp - c.trade.sl))}</b>
+      from its stop at <b style="color:var(--danger)">${px(c.trade.sl)}</b>.
+    </div>` : "";
+
+  const planLine = (p.entry && c.why !== "stop") ? `
+    <div class="planbox">
+      <div class="plabel">Suggested plan</div>
+      <div class="planrow">
+        <span>entry <b>${px(p.entry)}</b></span>
+        <span>stop <b style="color:var(--down)">${px(p.stop_loss)}</b></span>
+        <span>target <b style="color:var(--up)">${px(p.target)}</b></span>
+        ${p.reward_risk ? `<span>R:R <b>${p.reward_risk}</b></span>` : ""}
+      </div>
+    </div>` : "";
+
+  // A stop alert is not a strategy call — the vote strip and conviction score
+  // are irrelevant noise there, so they are omitted rather than shown as "0 of 7".
+  const isStop = c.why === "stop";
+
+  return `
+  <div class="tcard ${isStop ? "urgent" : ""} ${fresh ? "promoted" : ""}">
+    <div class="tcard-top">
+      <span class="tcard-sym">${esc(c.name)}</span>
+      <span class="tcard-ltp" data-ltp="${esc(c.name)}" data-v="${c.ltp ?? ""}">${c.ltp != null ? px(c.ltp) : "—"}</span>
+      <span class="tcard-chg ${chgCls}">${c.change_pct >= 0 ? "▲" : "▼"} ${Math.abs(c.change_pct || 0).toFixed(2)}%</span>
+      <span class="tcard-spacer"></span>
+      <span class="pill ${pillCls}">${pillTxt}</span>
+      ${isStop ? "" : `<span class="conv">${Math.round((c.score || 0) * 100)}%</span>`}
+    </div>
+    ${isStop ? "" : voteStrip(c.votes)}
+    ${stopLine}${planLine}
+    <div class="tcard-acts">
+      ${isStop ? "" : `<button class="abtn js-why" data-why="${esc(c.name)}">Why this?</button>`}
+      <button class="abtn" onclick="quickAsk('What should I do about ${esc(c.name)} right now?')">Ask advisor</button>
+    </div>
+    ${isStop ? "" : `<div class="whybox" data-whybox="${esc(c.name)}" hidden>${voteTable(c.votes)}</div>`}
+  </div>`;
+}
+
+function compactRow(c, muted) {
+  const chgCls = c.change_pct >= 0 ? "pos" : "neg";
+  return `<div class="trow ${muted ? "muted" : ""}">
+    <span class="n">${esc(c.name)}</span>
+    <span class="p" data-ltp="${esc(c.name)}" data-v="${c.ltp ?? ""}">${c.ltp != null ? px(c.ltp) : "—"}</span>
+    <span class="c ${chgCls}">${c.change_pct >= 0 ? "▲" : "▼"} ${Math.abs(c.change_pct || 0).toFixed(2)}%</span>
+    <span class="s">${c.label === "NEUTRAL" ? "no view" : esc(c.label).toLowerCase()} · ${Math.round((c.score || 0) * 100)}%</span>
+  </div>`;
+}
+
+function renderBriefing(s) {
+  const now = new Date();
+  $("bf-clock").textContent = now.toLocaleTimeString("en-IN",
+      {hour: "2-digit", minute: "2-digit", hour12: false});
+  $("bf-date").textContent = now.toLocaleDateString("en-IN",
+      {weekday: "short", day: "numeric", month: "short"});
+  $("bf-greet").textContent = greetFor(now.getHours()) + ", Karthikeya";
+
+  const {needs, watch, ignore} = triage(s);
+  const total = needs.length + watch.length + ignore.length;
+
+  // ── the three proof tiles ──
+  const rc = reclaimedText();
+  $("bf-reclaimed").innerHTML = `${rc.v}<span class="unit">${rc.u}</span>`;
+  $("bf-reclaimed-foot").textContent = RECLAIM.loaded
+    ? `last 7 days · modelled at ${REVIEW_SEC}s per symbol reviewed`
+    : "reading your journal…";
+
+  $("bf-scanned").textContent = total;
+  $("bf-needs").textContent = needs.length;
+  $("bf-triage-foot").textContent = needs.length
+    ? `${total - needs.length} handled without you`
+    : "nothing needs you right now";
+
+  const r = s.risk || {};
+  $("bf-budget").textContent = r.loss_budget_left != null ? money(r.loss_budget_left) : "—";
+  $("bf-budget-foot").textContent = r.kill_switch
+    ? "🛑 kill-switch tripped — no new trades"
+    : (r.daily_loss_limit != null ? `of ${money(Math.abs(r.daily_loss_limit))} daily cap · ${r.trades_today}/${r.max_trades_per_day} trades` : "—");
+
+  // ── subtitle: the productivity claim, in words ──
+  const mins = Math.max(1, Math.round(needs.length * 1.5 + 1.5));
+  $("bf-sub").innerHTML = !s.market_open
+    ? `Market's closed. Here's where things stand — <b>${mins} minute read</b>.`
+    : needs.length
+      ? `<b>${needs.length}</b> ${needs.length === 1 ? "thing needs" : "things need"} you. The other <b>${total - needs.length}</b> are handled. <b>${mins} minute read</b>.`
+      : `Nothing needs you. All <b>${total}</b> symbols are being watched.`;
+
+  $("cnt-needs").textContent  = needs.length;
+  $("cnt-watch").textContent  = watch.length;
+  $("cnt-ignore").textContent = ignore.length;
+  $("n-needs").textContent    = needs.length;
+
+  // ── rebuild lists only when membership/scores actually change ──
+  const key = JSON.stringify([
+    needs.map(c => [c.name, c.label, Math.round(c.score * 100), c.why]),
+    watch.map(c => [c.name, Math.round(c.score * 100)]),
+    ignore.map(c => c.name),
+  ]);
+  if (key !== BF_KEY) {
+    BF_KEY = key;
+    renderInto($("bf-needs-list"), needs.length
+      ? needs.map(needsCard).join("")
+      : `<div class="estate">
+           <div class="icon">✓</div>
+           <div class="t">Nothing needs your attention</div>
+           <div class="d">${total} symbols scanned. Every one is either quiet or behaving.
+             You'll be interrupted only when that changes.</div>
+         </div>`);
+    $("bf-watch-list").innerHTML  = watch.map(c => compactRow(c, false)).join("")
+      || `<div class="trow muted"><span class="n">Nothing building.</span></div>`;
+    $("bf-ignore-list").innerHTML = ignore.map(c => compactRow(c, true)).join("")
+      || `<div class="trow muted"><span class="n">Nothing quiet.</span></div>`;
+    needs.forEach(c => BF_SEEN.add(c.name));
+    [...BF_SEEN].forEach(n => { if (!needs.some(c => c.name === n)) BF_SEEN.delete(n); });
+  } else {
+    // cheap path: numbers only, no DOM rebuild
+    const all = [...needs, ...watch, ...ignore];
+    document.querySelectorAll("#page-briefing [data-ltp]").forEach(el => {
+      const c = all.find(x => x.name === el.dataset.ltp);
+      if (!c || c.ltp == null) return;
+      el.dataset.v = c.ltp;
+      const t = px(c.ltp);
+      if (el.textContent !== t) el.textContent = t;
+    });
+  }
+  paintLive($("page-briefing"));
+
+  // ── mood + overnight ──
+  const m = s.sentiment;
+  // Colour follows the LABEL, never the raw bias: the backend derives the label
+  // from avg while bias is avg*2, so thresholding bias here drifts out of sync
+  // and paints "NEUTRAL" green.
+  const moodCol = m && m.label === "BULLISH" ? "var(--up)"
+                : m && m.label === "BEARISH" ? "var(--down)" : "var(--flat)";
+  $("bf-mood").innerHTML = m ? `
+    <div class="mood-val" style="color:${moodCol}">${esc(m.label)}</div>
+    <div class="mood-bias">${m.bias >= 0 ? "+" : ""}${m.bias.toFixed(2)} · ${m.n} headlines · ${esc(m.engine)}</div>`
+    : `<div class="estate" style="padding:var(--s6) 0">
+         <div class="t" style="font-size:13px">No sentiment yet</div>
+         <div class="d">Headlines are scored every 10 minutes.</div></div>`;
+
+  const hs = s.headlines || [];
+  $("bf-news").innerHTML = hs.length
+    ? hs.slice(0, 6).map(h => `<div class="hl">
+        <span class="dot ${h.sentiment > .1 ? "p" : h.sentiment < -.1 ? "n" : ""}"></span>
+        <span>${esc(h.title)} <span class="src">${esc(h.source)}</span></span></div>`).join("")
+    : `<div class="estate" style="padding:var(--s6) 0">
+         <div class="t" style="font-size:13px">No headlines yet</div>
+         <div class="d">The news feed refreshes shortly after the engine starts.</div></div>`;
+}
+
+/* explain drawer — delegated so it survives every re-render */
+document.addEventListener("click", e => {
+  const b = e.target.closest(".js-why");
+  if (!b) return;
+  const box = b.closest(".tcard").querySelector(`[data-whybox="${CSS.escape(b.dataset.why)}"]`);
+  if (!box) return;
+  const open = box.hasAttribute("hidden");
+  box.toggleAttribute("hidden", !open);
+  b.classList.toggle("on", open);
+  b.textContent = open ? "Hide reasoning" : "Why this?";
+});
+
 /* ── live render from websocket ─────────────────────────────────────────── */
 let LAST = null;
 function render(s) {
+  try { renderBriefing(s); } catch (e) { console.error("briefing:", e); }
   $("mode").textContent = s.mode.toUpperCase();
   $("mode").className = "badge " + (s.mode === "live" ? "live" : "paper");
   $("market").textContent = s.market_open ? "MARKET OPEN" : "MARKET CLOSED";
   $("market").className = "badge" + (s.market_open ? " open" : "");
+  // Replay badge: driven only by the server-stamped flag, never inferred.
+  const rp = $("replay");
+  if (s.replay) {
+    rp.style.display = "";
+    rp.textContent = s.replay_total
+      ? `REPLAY ${s.replay_pos}/${s.replay_total}` : "REPLAY";
+    rp.title = "Recorded session — not live market data";
+  } else {
+    rp.style.display = "none";
+  }
   $("feed").textContent = s.feed;
   $("scan").textContent = s.last_scan ? "last scan " + s.last_scan : "";
 
@@ -588,7 +1283,7 @@ function render(s) {
       <div class="card">
         <div class="head">
           <span class="sym">${esc(c.name)}</span>
-          <span class="ltp">${c.ltp.toLocaleString("en-IN")}</span>
+          <span class="ltp">${px(c.ltp)}</span>
           <span class="${c.change_pct >= 0 ? "pos" : "neg"}" style="font-size:12px">
             ${c.change_pct >= 0 ? "▲" : "▼"} ${Math.abs(c.change_pct).toFixed(2)}%</span>
         </div>
@@ -598,9 +1293,9 @@ function render(s) {
           <span style="color:var(--muted)">${Math.round(c.score * 100)}%</span>
         </div>
         <div class="kv">
-          <span><b>RSI</b>${c.rsi}</span>
-          <span><b>VWAP</b>${c.vwap.toLocaleString("en-IN")}</span>
-          <span><b>Supertrend</b>${c.supertrend === 1 ? "▲ up" : "▼ down"}</span>
+          <span><b>RSI</b>${c.rsi == null ? "—" : Math.round(c.rsi)}</span>
+          <span><b>VWAP</b>${px(c.vwap)}</span>
+          <span><b>Supertrend</b>${c.supertrend == null ? "—" : c.supertrend === 1 ? "▲ up" : "▼ down"}</span>
         </div>
         ${c.plan && c.plan.entry ? `<div class="plan">🎯 entry <b style="color:var(--ink)">${c.plan.entry}</b>
            · SL <b style="color:var(--critical)">${c.plan.stop_loss}</b>
@@ -623,7 +1318,7 @@ function render(s) {
         <b style="color:var(--ink)">${esc(c.name)}</b>
         <div class="meter" style="max-width:90px"><div style="width:${Math.round(c.score*100)}%;background:${dirColor(c.label)}"></div></div>
         <span style="color:var(--muted)">${Math.round(c.score * 100)}%</span>
-        <span class="spacer"></span><span>${c.ltp.toLocaleString("en-IN")}</span>
+        <span class="spacer"></span><span>${px(c.ltp)}</span>
       </div>`).join("");
   }
 
@@ -1240,7 +1935,12 @@ $("jrefresh").onclick = loadJournal;
 })();
 
 /* ── boot ───────────────────────────────────────────────────────────────── */
-showTab(localStorage.getItem("omnix_tab") || "overview");
+showTab(localStorage.getItem("omnix_tab") || "briefing");
+loadReclaim();
+setInterval(loadReclaim, 120000);
+$("bf-info").addEventListener("click", () => toast(
+  `Modelled, not measured: ${RECLAIM.signals} symbol scans x ${REVIEW_SEC}s of manual review, `
+  + `minus ${RECLAIM.alerts} alerts x ${ATTEND_SEC}s you actually spent.`));
 requestAnimationFrame(moveTabline);
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 </script>

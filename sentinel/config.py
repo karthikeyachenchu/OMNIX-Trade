@@ -112,7 +112,11 @@ def load_settings(path: Path | None = None) -> Settings:
         cost_overrides=dict(raw.get("costs", {}) or {}),
         alert_desktop=bool(alerts.get("desktop", True)),
         alert_sound=bool(alerts.get("sound", True)),
-        ntfy_topic=str(alerts.get("ntfy_topic", "") or "").strip(),
+        # Anyone who knows the ntfy topic can read your trade alerts and push
+        # to your phone, so it behaves like a password. NTFY_TOPIC in .env
+        # (git-ignored) wins over config.yaml (tracked) to keep it out of git.
+        ntfy_topic=(os.getenv("NTFY_TOPIC", "").strip()
+                    or str(alerts.get("ntfy_topic", "") or "").strip()),
         dash_host=dash.get("host", "127.0.0.1"),
         dash_port=int(dash.get("port", 8080)),
         auto_open_browser=bool(dash.get("auto_open_browser", True)),

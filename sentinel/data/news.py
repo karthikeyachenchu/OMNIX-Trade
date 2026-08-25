@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 log = logging.getLogger("sentinel.news")
 
+FEED_TIMEOUT_SEC = 8.0   # per-feed ceiling; the scan thread must never block
+
 FEEDS = {
     "MoneyControl Markets": "https://www.moneycontrol.com/rss/marketreports.xml",
     "MoneyControl Business": "https://www.moneycontrol.com/rss/business.xml",
@@ -35,20 +37,32 @@ class NewsFetcher:
     def headlines(self, limit: int = 30, force: bool = False) -> list[Headline]:
         if not force and self._cache and (time.time() - self._fetched_at) < self._ttl:
             return self._cache[:limit]
+        import socket
+
         import feedparser
         items: list[Headline] = []
-        for source, url in FEEDS.items():
-            try:
-                parsed = feedparser.parse(url)
-                for e in parsed.entries[:12]:
-                    items.append(Headline(
-                        title=e.get("title", "").strip(),
-                        source=source,
-                        link=e.get("link", ""),
-                        published=e.get("published", ""),
-                    ))
-            except Exception as exc:
-                log.warning("feed %s failed: %s", source, exc)
+        # feedparser.parse() takes no timeout argument and urllib's default
+        # socket timeout is None — i.e. infinite. A host that accepts the
+        # connection then never answers would block the scan thread forever,
+        # and the try/except below cannot help because a hang never raises.
+        # This runs on the engine thread, so that stalls the whole product.
+        prev_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(FEED_TIMEOUT_SEC)
+        try:
+            for source, url in FEEDS.items():
+                try:
+                    parsed = feedparser.parse(url)
+                    for e in parsed.entries[:12]:
+                        items.append(Headline(
+                            title=e.get("title", "").strip(),
+                            source=source,
+                            link=e.get("link", ""),
+                            published=e.get("published", ""),
+                        ))
+                except Exception as exc:
+                    log.warning("feed %s failed: %s", source, exc)
+        finally:
+            socket.setdefaulttimeout(prev_timeout)
         seen: set[str] = set()
         unique = []
         for h in items:

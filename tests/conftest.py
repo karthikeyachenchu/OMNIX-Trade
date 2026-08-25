@@ -31,6 +31,27 @@ def frozen_clock():
     clock.reset_clock()
 
 
+@pytest.fixture(autouse=True)
+def guard_real_journal():
+    """Fail any test that writes to the real journal.db.
+
+    The docstring at the top of this file has always claimed no test touches
+    it, but nothing enforced that. Objects like TradeTracker take
+    `path: Path = DB`, and because a default argument binds at import time,
+    monkeypatching `sentinel.tracker.DB` silently does nothing — a test that
+    looked isolated wrote three rows into the real trade journal. A wrong
+    trading record is worse than a failing test, so this makes the claim real.
+    """
+    db = ROOT / "journal.db"
+    before = (db.stat().st_size, db.stat().st_mtime_ns) if db.exists() else None
+    yield
+    after = (db.stat().st_size, db.stat().st_mtime_ns) if db.exists() else None
+    if before != after:
+        pytest.fail(
+            "test wrote to the real journal.db — pass an explicit "
+            "path=tmp_path/'x.db' instead of relying on the module default")
+
+
 @pytest.fixture
 def limits():
     return RiskLimits(

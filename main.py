@@ -4,6 +4,7 @@
   python main.py --login    daily Fyers login (run each morning once you have the API key)
   python main.py --once     one scan cycle, print results, exit (smoke test)
   python main.py --no-dashboard   engine + console alerts only
+  python main.py --replay FILE    replay a recorded session (markets shut / demo)
 """
 
 from __future__ import annotations
@@ -35,12 +36,22 @@ def main():
     ap.add_argument("--login", action="store_true", help="run the daily Fyers login flow")
     ap.add_argument("--once", action="store_true", help="single scan cycle then exit")
     ap.add_argument("--no-dashboard", action="store_true", help="skip the web dashboard")
+    ap.add_argument("--replay", metavar="FILE", default="",
+                    help="replay a recorded session instead of trading live "
+                         "(record one with tools/record_session.py)")
+    ap.add_argument("--replay-speed", type=float, default=1.0,
+                    help="replay speed multiplier (default 1.0)")
+    ap.add_argument("--port", type=int, default=0,
+                    help="override the dashboard port (e.g. run a replay "
+                         "alongside the live app)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     setup_logging(args.verbose)
 
     from sentinel.config import load_settings
     settings = load_settings()
+    if args.port:
+        settings.dash_port = args.port
 
     # ── Fyers session (only if credentials are present) ───────────────────
     fyers_session = None
@@ -61,11 +72,41 @@ def main():
     from sentinel.llm.tools import ToolExecutor
 
     engine = TradingEngine(settings, fyers_session)
-    try:
-        engine.advisor = Advisor(settings, ToolExecutor(engine))
-        console.print(f"[cyan]LLM advisor ready: {engine.advisor.model}[/cyan]")
-    except Exception as e:
-        console.print(f"[yellow]LLM advisor unavailable ({e}) — signals & alerts still work.[/yellow]")
+
+    # ── replay mode ───────────────────────────────────────────────────────
+    # Wraps the engine BEFORE anything starts, so the live scan loop, the
+    # fast loop, the tick socket and the notifier never run. A replay can
+    # therefore never place a paper trade or fire an alert.
+    if args.replay:
+        from sentinel.replay import ReplayEngine, load_frames
+        try:
+            frames = load_frames(args.replay)
+        except (FileNotFoundError, ValueError) as e:
+            console.print(f"[red]{e}[/red]")
+            console.print("[yellow]Record one first: python tools/record_session.py"
+                          "[/yellow]")
+            sys.exit(1)
+        engine = ReplayEngine(engine, frames, speed=args.replay_speed)
+        console.print(f"[bold yellow]REPLAY MODE[/bold yellow] — {len(frames)} frames "
+                      f"from {args.replay} at {args.replay_speed}x. "
+                      "No live data, no orders.")
+
+    # Advisor init probes Ollama and retries 3× with a 1s sleep, so a machine
+    # with Ollama stopped paid ~10s of dead time before the dashboard even
+    # started. The advisor is optional and self-heals on first use, so build
+    # it off-thread and let the UI come up immediately.
+    def _init_advisor():
+        try:
+            engine.advisor = Advisor(settings, ToolExecutor(engine))
+            console.print(f"[cyan]LLM advisor ready: {engine.advisor.model}[/cyan]")
+        except Exception as e:
+            console.print(f"[yellow]LLM advisor unavailable ({e}) — "
+                          "signals & alerts still work.[/yellow]")
+
+    if args.once:
+        _init_advisor()          # synchronous: --once exits before a thread would finish
+    else:
+        threading.Thread(target=_init_advisor, name="advisor-init", daemon=True).start()
 
     if args.once:
         console.print("[bold]Running one scan cycle...[/bold]")

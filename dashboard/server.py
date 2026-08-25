@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import secrets
 import socket
 import time
@@ -18,6 +19,25 @@ log = logging.getLogger("sentinel.dashboard")
 STATIC = Path(__file__).parent / "static"
 
 _LOCAL = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+def json_safe(obj):
+    """Strip non-finite floats out of a payload.
+
+    Python's json.dumps happily writes bare NaN / Infinity, which are NOT
+    valid JSON — JSON.parse() in the browser throws on them and the client
+    silently drops the whole message. Indicators legitimately go NaN
+    (VWAP before the first intraday bar, ATR during warm-up, any indicator
+    when the market is shut), so this has to be handled, not avoided.
+    Non-finite becomes null, which every consumer already treats as "no value".
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+    return obj
 
 
 def lan_ip() -> str:
@@ -70,6 +90,21 @@ class KillResetRequest(BaseModel):
 
 def create_app(engine) -> FastAPI:
     app = FastAPI(title="OMNIX-Trade")
+
+    @app.exception_handler(Exception)
+    async def _json_errors(request: Request, exc: Exception):
+        """Last-resort net: an unhandled error returns JSON, never an HTML 500.
+
+        Every fetch() in the dashboard does response.json(). FastAPI's default
+        500 body is plain text, so an unhandled backend error surfaced in the
+        UI as an unrelated JSON parse error and hid what actually broke.
+        """
+        log.error("unhandled error on %s %s", request.method, request.url.path,
+                  exc_info=exc)
+        return JSONResponse(
+            {"error": f"{type(exc).__name__}: {exc}", "path": request.url.path},
+            status_code=500)
+
     pin = engine.s.dash_pin
     # Defect D3: this dashboard exposes money-moving POST endpoints. It used to
     # bind 0.0.0.0 with the PIN check disabled (DASHBOARD_PIN was never set),
@@ -158,25 +193,48 @@ def create_app(engine) -> FastAPI:
             while True:
                 # 4 Hz push so charts/numbers track the live socket ticks with
                 # no perceptible lag (ticks themselves arrive in <0.4s).
-                await websocket.send_json(engine.snapshot())
+                await websocket.send_json(json_safe(engine.snapshot()))
                 await asyncio.sleep(0.25)
         except WebSocketDisconnect:
             pass
         except Exception as e:
             log.debug("ws closed: %s", e)
 
+    def _advisor_offline(exc: Exception) -> dict:
+        """The advisor is optional; the rest of the product is not.
+
+        `engine.advisor is None` is NOT a sufficient guard: the Advisor object
+        constructs fine against a fallback model and only fails later, inside
+        ollama.chat(), when the daemon is not running. That raised a bare
+        ConnectionError out of the handler and the browser got a 500 with an
+        HTML body, which the frontend cannot parse — so the Assistant tab and
+        every "Why this? / Ask advisor" button appeared broken rather than
+        merely unavailable. Degrade, never 500.
+        """
+        log.warning("advisor call failed: %s: %s", type(exc).__name__, exc)
+        return {"reply": "⚠ Advisor offline — start Ollama (`ollama serve`) to enable "
+                         "the AI assistant. Signals, risk limits and alerts are "
+                         "unaffected.",
+                "advisor_offline": True}
+
     @app.post("/api/chat")
     async def chat(msg: ChatMessage):
         if engine.advisor is None:
-            return {"reply": "Advisor not available (is Ollama running?)"}
-        reply = await asyncio.to_thread(engine.advisor.chat, msg.message.strip())
+            return _advisor_offline(RuntimeError("advisor not configured"))
+        try:
+            reply = await asyncio.to_thread(engine.advisor.chat, msg.message.strip())
+        except Exception as e:
+            return _advisor_offline(e)
         return {"reply": reply}
 
     @app.post("/api/briefing")
     async def briefing():
         if engine.advisor is None:
-            return {"reply": "Advisor not available (is Ollama running?)"}
-        reply = await asyncio.to_thread(engine.advisor.morning_briefing)
+            return _advisor_offline(RuntimeError("advisor not configured"))
+        try:
+            reply = await asyncio.to_thread(engine.advisor.morning_briefing)
+        except Exception as e:
+            return _advisor_offline(e)
         return {"reply": reply}
 
     @app.get("/api/journal")
@@ -242,7 +300,13 @@ def create_app(engine) -> FastAPI:
     @app.get("/api/optionchain")
     async def optionchain(symbol: str = "NSE:NIFTY50-INDEX", count: int = 8):
         chain_fn = getattr(engine.feed, "option_chain", None)
-        raw = chain_fn(symbol, count) if chain_fn else {}
+        try:
+            raw = chain_fn(symbol, count) if chain_fn else {}
+        except Exception as e:
+            # Expired token / rate limit / no Fyers session. The Options tab
+            # must show a message, not a dead 500.
+            log.warning("option chain failed for %s: %s", symbol, e)
+            raw = {}
         if not raw:
             return {"error": "Option chain unavailable (needs live Fyers data)"}
         rows = raw.get("optionsChain", [])

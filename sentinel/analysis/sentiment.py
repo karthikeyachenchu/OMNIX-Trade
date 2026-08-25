@@ -51,9 +51,26 @@ class _FinBertBackend:
     name = "FinBERT"
 
     def __init__(self):
+        # transformers >= 4.56 refuses to torch.load() a .bin checkpoint on
+        # torch < 2.6 (CVE-2025-32434), and ProsusAI/finbert ships .bin only.
+        # So on torch < 2.6 this path ALWAYS fails and always falls back to
+        # VADER — after paying ~11s to import torch. Read the version from
+        # package metadata instead, which costs microseconds and no import.
+        from importlib.metadata import PackageNotFoundError, version
+        try:
+            raw = version("torch")
+        except PackageNotFoundError as e:
+            raise RuntimeError("torch not installed") from e
+        if tuple(int(x) for x in raw.split("+")[0].split(".")[:2]) < (2, 6):
+            raise RuntimeError(
+                f"torch {raw} < 2.6 cannot load FinBERT's .bin weights "
+                "(CVE-2025-32434); using VADER. Upgrade torch for FinBERT.")
+
+        import torch
         from transformers import pipeline
+        device = 0 if torch.cuda.is_available() else -1
         self._pipe = pipeline("sentiment-analysis", model="ProsusAI/finbert",
-                              device=0, truncation=True)
+                              device=device, truncation=True)
 
     def score(self, text: str) -> float:
         r = self._pipe(text[:512])[0]
@@ -70,10 +87,10 @@ class SentimentEngine:
             return
         try:
             self._backend = _FinBertBackend()
-            log.info("Sentiment backend: FinBERT (GPU)")
-        except Exception:
+            log.info("Sentiment backend: FinBERT")
+        except Exception as e:
             self._backend = _VaderBackend()
-            log.info("Sentiment backend: VADER (install requirements-finbert.txt for FinBERT)")
+            log.info("Sentiment backend: VADER (%s)", e)
 
     def analyze(self, headlines: list[Headline]) -> MarketSentiment:
         self._ensure_backend()

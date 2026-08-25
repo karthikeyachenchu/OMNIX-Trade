@@ -42,10 +42,40 @@ That's it. Nothing else changes.
 | `python main.py --login` | Morning Fyers login (only when using live data) |
 | `python main.py --once` | One scan, print signals to console, exit |
 | `python main.py --no-dashboard` | Console-only mode |
+| `python tools/record_session.py` | Record the live session to `sessions/<date>.jsonl.gz` |
+| `python main.py --replay FILE` | Replay a recorded session (demo when markets are shut) |
 
 On the dashboard: watch the signal cards, read the advisor's take, use the
 chat box ("Should I buy NIFTY calls here?", "What's the risk status?"), and
 hit **Market briefing** before the open.
+
+## Record & replay (demos when the market is shut)
+
+NSE and BSE are closed at nights and weekends, which is exactly when demos
+happen. Record a live session once, replay it any time:
+
+```powershell
+# during market hours, alongside the running app
+python tools/record_session.py                  # -> sessions/2026-08-25.jsonl.gz
+
+# any time afterwards
+python main.py --replay sessions/2026-08-25.jsonl.gz
+python main.py --replay sessions/2026-08-25.jsonl.gz --replay-speed 5 --port 8090
+```
+
+Replay feeds recorded snapshots through the same websocket the live engine
+uses, so every tab behaves normally. Three things make it safe:
+
+- Every frame is stamped `replay: true` at the source, and the header shows an
+  amber **REPLAY n/total** badge. Replayed data is never presentable as live.
+- The engine is wrapped *before* startup, so the scan loop, the fast loop, the
+  tick socket and the notifier never run — a replay cannot place a paper trade
+  or fire an alert.
+- Recording runs in its own process and reconnects on its own, so it can never
+  slow down or crash live trading, and it survives an app restart.
+
+Recorded sessions embed your live account snapshot, so `sessions/` is
+git-ignored. Keep those files private.
 
 ## What's inside
 
@@ -101,6 +131,11 @@ pip install -r requirements-finbert.txt
 
 ~2.5 GB download. Without it, an enhanced VADER (finance lexicon) is used —
 lighter and instant.
+
+Note: FinBERT ships `.bin` weights, which `transformers` ≥ 4.56 refuses to load
+on `torch` < 2.6 (CVE-2025-32434). On an older torch the app detects this from
+package metadata and goes straight to VADER instead of paying ~11 s to import
+torch only to fail. Upgrade torch if you want FinBERT.
 
 ## Tuning
 

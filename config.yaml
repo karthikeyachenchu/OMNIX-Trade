@@ -107,8 +107,10 @@ alerts:
   desktop: true                  # Windows toast notifications
   sound: true                    # beep on signals (distinct tone per severity)
   # Phone push via ntfy: install the "ntfy" app (Play Store / App Store) and
-  # subscribe to this exact topic. Treat the topic like a password.
-  ntfy_topic: omnix-trade-karth-x9k42v
+  # subscribe to your topic. The topic is effectively a password — anyone who
+  # knows it can read your trade alerts — so set NTFY_TOPIC in .env (which is
+  # git-ignored) rather than here. .env wins over this value.
+  ntfy_topic: ""
 
 # ── Execution realism. Paper trading must never flatter itself (§7).
 execution:

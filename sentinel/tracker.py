@@ -9,10 +9,12 @@ trail, square-off due). Persisted in journal.db so a restart loses nothing.
 
 from __future__ import annotations
 
+import calendar
 import re
 import sqlite3
 import threading
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from . import clock
@@ -22,6 +24,46 @@ DB = ROOT / "journal.db"
 
 # EXCH:UNDERLYING<yy><expiry><strike><CE|PE>  e.g. BSE:SENSEX2671678000CE
 _OPT_RE = re.compile(r"^[A-Z]+:([A-Z]+)\d{2}[A-Z0-9]{3}(\d+)(CE|PE)$")
+# Same, but capturing the year and expiry field so the date can be recovered.
+_OPT_EXPIRY_RE = re.compile(r"^[A-Z]+:[A-Z]+(\d{2})([A-Z0-9]{3})\d+(?:CE|PE)$")
+
+# Fyers weekly expiry month codes: 1-9 then O, N, D for Oct/Nov/Dec.
+_MONTH_CODE = {**{str(i): i for i in range(1, 10)}, "O": 10, "N": 11, "D": 12}
+_MONTH_NAME = {m: i for i, m in enumerate(
+    ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+     "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], start=1)}
+
+
+def option_expiry(symbol: str) -> date | None:
+    """Expiry date encoded in a Fyers option symbol, or None if not an option.
+
+    Two encodings share the same three characters:
+      weekly   MDD  -> "716" = 16 July      (month 1-9, then O/N/D)
+      monthly  MMM  -> "JUL" = July expiry, day unknown
+
+    For monthly contracts the day is not in the symbol, so the last day of
+    the month is used. That is deliberately the *latest* possible expiry —
+    it can only ever make this function slower to declare a contract dead,
+    never premature. Wrongly expiring a live position would be far worse
+    than carrying a dead one for a few extra days.
+    """
+    m = _OPT_EXPIRY_RE.match(symbol)
+    if not m:
+        return None
+    yy, field = m.group(1), m.group(2)
+    year = 2000 + int(yy)
+
+    if field in _MONTH_NAME:                      # monthly, e.g. "JUL"
+        month = _MONTH_NAME[field]
+        return date(year, month, calendar.monthrange(year, month)[1])
+
+    code, dd = field[0], field[1:]                # weekly, e.g. "716"
+    if code not in _MONTH_CODE or not dd.isdigit():
+        return None
+    try:
+        return date(year, _MONTH_CODE[code], int(dd))
+    except ValueError:
+        return None
 
 
 def _display_name(symbol: str) -> str:
@@ -182,6 +224,37 @@ class TradeTracker:
                     self._guidance.pop(trade_id, None)
                     return t
         return None
+
+    def expire_stale_options(self) -> list[TrackedTrade]:
+        """Retire option positions whose contract has already expired.
+
+        An expired contract has no quote, so SL/target can never trigger and
+        the trade stays OPEN forever — it sat in every snapshot with null LTP
+        and null P&L, and made the feed 404 on a dead symbol on every scan.
+
+        The exit price is deliberately NOT invented. Settlement value depends
+        on the underlying's close on expiry day, which is not knowable here,
+        and a trading journal that fabricates a P&L is worse than one that
+        admits it does not know. These are marked EXPIRED with pnl=None for
+        the user to reconcile against their contract note.
+        """
+        today = clock.now().date()
+        retired = []
+        with self._lock:
+            for i in range(len(self._trades) - 1, -1, -1):
+                t = self._trades[i]
+                exp = option_expiry(t.symbol)
+                if exp is None or exp >= today:
+                    continue
+                t.status, t.closed_at = "EXPIRED", clock.now_iso()
+                t.exit_price, t.pnl = None, None
+                with self._conn() as c:
+                    c.execute("UPDATE tracked_trades SET status='EXPIRED', closed_at=?, "
+                              "exit_price=NULL, pnl=NULL WHERE id=?", (t.closed_at, t.id))
+                self._trades.pop(i)
+                self._guidance.pop(t.id, None)
+                retired.append(t)
+        return retired
 
     def open_trades(self) -> list[TrackedTrade]:
         with self._lock:
