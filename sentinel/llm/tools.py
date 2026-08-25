@@ -178,19 +178,23 @@ class ToolExecutor:
                                "sentiment": h.sentiment or "n/a"} for h in items]}
 
     def _t_get_risk_status(self) -> dict:
-        return self.engine.guardian.snapshot()
+        # Every rupee figure in this system is INR. Without saying so, a
+        # US-centric base model formats them as dollars, and an Indian options
+        # product that reports "$100,000.00" to its user is simply wrong.
+        return {"currency": "INR", **self.engine.guardian.snapshot()}
 
     def _t_allocate_capital(self, amount) -> dict:
         try:
             amount = float(str(amount).replace(",", "").replace("₹", "").strip())
         except ValueError:
             return {"error": f"could not parse amount: {amount!r}"}
-        return self.engine.allocate(amount)
+        return {"currency": "INR", **self.engine.allocate(amount)}
 
     def _t_get_wallet(self) -> dict:
         if not self.engine.wallet.active:
             return {"status": "auto-invest is OFF — no wallet active"}
-        return {**self.engine.wallet.state(), "recent_ledger": self.engine.wallet.ledger(8)}
+        return {"currency": "INR", **self.engine.wallet.state(),
+                "recent_ledger": self.engine.wallet.ledger(8)}
 
     def _live_ltps(self) -> dict:
         """Freshest LTPs available: 30s scan + option quotes + real-time ticks."""
